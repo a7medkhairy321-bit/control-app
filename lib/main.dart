@@ -8,7 +8,7 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
-// ================= App Colors =================
+// ================= الألوان الرسمية للتطبيق =================
 class AppColors {
   static const navy = Color(0xFF1E3A5F);
   static const lightBlue = Color(0xFF5B9BD5);
@@ -20,6 +20,7 @@ class AppColors {
   static const darkCard = Color(0xFF1E293B);
 }
 
+// وضع الإضاءة العام (فاتح/ليلي) — قابل للاستماع من أي مكان في الشجرة
 final ValueNotifier<ThemeMode> themeModeNotifier = ValueNotifier(
   ThemeMode.light,
 );
@@ -63,7 +64,9 @@ void main() async {
   runApp(const SmartGateApp());
 }
 
-// ================= Secure Storage Service =================
+// ================= تخزين آمن ومشفّر محليًا (PIN / Token / IP / الثيم) =================
+// بيستخدم Keychain على iOS/macOS، Keystore على Android، DPAPI على Windows،
+// و libsecret على Linux. مفيش أي بيانات حساسة متسيبة كنص صريح في الكود.
 class SecureStorageService {
   SecureStorageService._();
   static final SecureStorageService instance = SecureStorageService._();
@@ -78,7 +81,6 @@ class SecureStorageService {
   static const _darkModeKey = 'dark_mode';
 
   static const String _defaultIp = '192.168.1.50';
-  static const String _defaultPin = '1764'; // Fixed Default PIN
 
   String _generateToken() {
     final randomStr = Random.secure()
@@ -88,11 +90,19 @@ class SecureStorageService {
     return 'SEC_TOK_$randomStr';
   }
 
+  String _generatePin() {
+    // رمز مبدئي عشوائي بدل الرقم الثابت 1234؛ المستخدم يقدر يغيّره
+    // من نافذة الإعدادات فور أول تشغيل.
+    final rnd = Random.secure();
+    return List.generate(4, (_) => rnd.nextInt(10)).join();
+  }
+
   Future<String> getPin() async {
     final existing = await _storage.read(key: _pinKey);
     if (existing != null && existing.isNotEmpty) return existing;
-    await _storage.write(key: _pinKey, value: _defaultPin);
-    return _defaultPin;
+    final generated = _generatePin();
+    await _storage.write(key: _pinKey, value: generated);
+    return generated;
   }
 
   Future<void> setPin(String pin) async {
@@ -155,7 +165,7 @@ class SmartGateApp extends StatelessWidget {
   }
 }
 
-// ================= Lock Screen =================
+// ================= شاشة قفل البصمة وكلمة المرور (Fingerprint & Passcode Lock) =================
 class LockScreen extends StatefulWidget {
   const LockScreen({super.key});
 
@@ -168,7 +178,7 @@ class _LockScreenState extends State<LockScreen> {
   final TextEditingController _pinController = TextEditingController();
   final _storage = SecureStorageService.instance;
 
-  String? savedPin;
+  String? savedPin; // يتحمّل من التخزين المشفّر، مفيش قيمة ثابتة في الكود
   bool isLoadingPin = true;
   bool isBiometricSupported = false;
   bool isAuthenticating = false;
@@ -218,7 +228,7 @@ class _LockScreenState extends State<LockScreen> {
       });
 
       final bool authenticated = await auth.authenticate(
-        localizedReason: 'Please authenticate to unlock gate controls',
+        localizedReason: 'يرجى استخدام البصمة للتحكم في البوابة',
       );
 
       if (authenticated && mounted) {
@@ -226,7 +236,7 @@ class _LockScreenState extends State<LockScreen> {
       }
     } on PlatformException catch (e) {
       setState(() {
-        errorMessage = 'Biometric authentication failed: ${e.message}';
+        errorMessage = 'فشلت البصمة: ${e.message}';
       });
     } finally {
       if (mounted) {
@@ -242,7 +252,7 @@ class _LockScreenState extends State<LockScreen> {
       _unlockApp();
     } else {
       setState(() {
-        errorMessage = 'Invalid Passcode!';
+        errorMessage = 'رمز الحماية غير صحيح!';
       });
       _pinController.clear();
     }
@@ -287,7 +297,7 @@ class _LockScreenState extends State<LockScreen> {
                 ),
                 const SizedBox(height: 20),
                 const Text(
-                  'Smart Gate Security 🔒',
+                  'تأمين البوابة الذكية 🔒',
                   style: TextStyle(
                     fontSize: 26,
                     fontWeight: FontWeight.bold,
@@ -296,7 +306,7 @@ class _LockScreenState extends State<LockScreen> {
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'Please authenticate via biometric or passcode',
+                  'يرجى تأكيد الهوية بالبصمة أو الرمز للدخول',
                   style: TextStyle(fontSize: 14, color: Colors.white70),
                 ),
                 const SizedBox(height: 32),
@@ -340,7 +350,7 @@ class _LockScreenState extends State<LockScreen> {
                         decoration: InputDecoration(
                           hintText: '••••',
                           counterText: '',
-                          labelText: 'Passcode',
+                          labelText: 'رمز الحماية (Passcode)',
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(16),
                           ),
@@ -365,7 +375,7 @@ class _LockScreenState extends State<LockScreen> {
                           ),
                           onPressed: _verifyPin,
                           child: const Text(
-                            'Unlock with Passcode',
+                            'دخول بالرمز',
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
@@ -388,7 +398,7 @@ class _LockScreenState extends State<LockScreen> {
                             color: AppColors.navy,
                           ),
                           label: const Text(
-                            'Use Fingerprint',
+                            'استخدام البصمة (Fingerprint)',
                             style: TextStyle(
                               color: AppColors.navy,
                               fontWeight: FontWeight.bold,
@@ -411,7 +421,7 @@ class _LockScreenState extends State<LockScreen> {
   }
 }
 
-// ================= Main Navigator =================
+// ================= محمّل الحالة قبل عرض الشاشة الرئيسية =================
 class MainNavigator extends StatefulWidget {
   const MainNavigator({super.key});
 
@@ -469,7 +479,7 @@ class _MainNavigatorState extends State<MainNavigator> {
   }
 }
 
-// ================= Home Screen =================
+// ================= الشاشة الرئيسية (Smart Home Style) =================
 class HomeScreen extends StatefulWidget {
   final String esp32Ip;
   final String deviceToken;
@@ -633,7 +643,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 borderRadius: BorderRadius.circular(18),
               ),
               title: const Text(
-                'Change Passcode',
+                'تغيير رمز الحماية',
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               content: Column(
@@ -652,7 +662,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     obscureText: true,
                     maxLength: 4,
                     decoration: const InputDecoration(
-                      labelText: 'Current Passcode',
+                      labelText: 'الرمز الحالي',
                       counterText: '',
                     ),
                   ),
@@ -662,7 +672,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     obscureText: true,
                     maxLength: 4,
                     decoration: const InputDecoration(
-                      labelText: 'New Passcode',
+                      labelText: 'الرمز الجديد',
                       counterText: '',
                     ),
                   ),
@@ -672,7 +682,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     obscureText: true,
                     maxLength: 4,
                     decoration: const InputDecoration(
-                      labelText: 'Confirm New Passcode',
+                      labelText: 'تأكيد الرمز الجديد',
                       counterText: '',
                     ),
                   ),
@@ -681,7 +691,7 @@ class _HomeScreenState extends State<HomeScreen> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Cancel'),
+                  child: const Text('إلغاء'),
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
@@ -692,30 +702,29 @@ class _HomeScreenState extends State<HomeScreen> {
                     final storedPin = await _storage.getPin();
                     if (currentPinController.text != storedPin) {
                       setDialogState(
-                        () => dialogError = 'Current passcode is incorrect',
+                        () => dialogError = 'الرمز الحالي غير صحيح',
                       );
                       return;
                     }
                     if (newPinController.text.length != 4 ||
                         int.tryParse(newPinController.text) == null) {
                       setDialogState(
-                        () => dialogError = 'New passcode must be 4 digits',
+                        () => dialogError = 'الرمز الجديد لازم يكون 4 أرقام',
                       );
                       return;
                     }
                     if (newPinController.text != confirmPinController.text) {
                       setDialogState(
-                        () => dialogError = 'Passcodes do not match',
+                        () => dialogError = 'الرمزين غير متطابقين',
                       );
                       return;
                     }
                     await _storage.setPin(newPinController.text);
-                    if (dialogContext.mounted) {
+                    if (dialogContext.mounted)
                       Navigator.of(dialogContext).pop();
-                    }
-                    _showSuccessBanner('Passcode changed successfully 🔐');
+                    _showSuccessBanner('تم تغيير رمز الحماية بنجاح 🔐');
                   },
-                  child: const Text('Save'),
+                  child: const Text('حفظ'),
                 ),
               ],
             );
@@ -741,7 +750,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   Icon(Icons.settings_rounded, color: AppColors.navy),
                   SizedBox(width: 8),
                   Text(
-                    'Settings',
+                    'الإعدادات',
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ],
@@ -752,7 +761,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'ESP32 IP Address',
+                      'عنوان ESP32 IP',
                       style: TextStyle(
                         fontWeight: FontWeight.w600,
                         fontSize: 13,
@@ -774,7 +783,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         const Text(
-                          'Dark Mode 🌙',
+                          'الوضع الليلي 🌙',
                           style: TextStyle(
                             fontWeight: FontWeight.w600,
                             fontSize: 13,
@@ -785,7 +794,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           builder: (context, mode, _) {
                             return Switch(
                               value: mode == ThemeMode.dark,
-                              activeTrackColor: AppColors.navy,
+                              activeColor: AppColors.navy,
                               onChanged: (val) async {
                                 themeModeNotifier.value = val
                                     ? ThemeMode.dark
@@ -800,7 +809,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     const SizedBox(height: 18),
                     const Text(
-                      'Security Token',
+                      'توكن الأمان',
                       style: TextStyle(
                         fontWeight: FontWeight.w600,
                         fontSize: 13,
@@ -820,7 +829,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         IconButton(
                           icon: const Icon(Icons.copy_rounded, size: 20),
-                          tooltip: 'Copy Token',
+                          tooltip: 'نسخ التوكن',
                           onPressed: () {
                             Clipboard.setData(
                               ClipboardData(text: widget.deviceToken),
@@ -829,7 +838,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         IconButton(
                           icon: const Icon(Icons.refresh_rounded, size: 20),
-                          tooltip: 'Regenerate Token',
+                          tooltip: 'توليد توكن جديد',
                           onPressed: () {
                             widget.onGenerateNewToken();
                             setDialogState(() {});
@@ -843,7 +852,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       child: TextButton.icon(
                         onPressed: () => _showChangePinDialog(context),
                         icon: const Icon(Icons.lock_reset_rounded, size: 18),
-                        label: const Text('Change Passcode'),
+                        label: const Text('تغيير رمز الحماية'),
                       ),
                     ),
                   ],
@@ -852,7 +861,7 @@ class _HomeScreenState extends State<HomeScreen> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Close'),
+                  child: const Text('إغلاق'),
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
@@ -862,9 +871,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   onPressed: () {
                     widget.onIpChanged(ipController.text.trim());
                     Navigator.of(dialogContext).pop();
-                    _showSuccessBanner('Settings saved ✅');
+                    _showSuccessBanner('تم حفظ الإعدادات ✅');
                   },
-                  child: const Text('Save'),
+                  child: const Text('حفظ'),
                 ),
               ],
             );
@@ -906,7 +915,7 @@ class _HomeScreenState extends State<HomeScreen> {
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: dark ? 0.25 : 0.05),
+            color: Colors.black.withOpacity(dark ? 0.25 : 0.05),
             blurRadius: 8,
             offset: const Offset(0, 3),
           ),
@@ -975,13 +984,13 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Header
+                  // ---------- الهيدر ----------
                   Row(
                     children: [
                       Container(
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.18),
+                          color: Colors.white.withOpacity(0.18),
                           shape: BoxShape.circle,
                         ),
                         child: Stack(
@@ -1017,7 +1026,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text(
-                              'Welcome Home 👋',
+                              'Welcome Home, Ahmed 👋',
                               style: TextStyle(
                                 color: Colors.white,
                                 fontSize: 18,
@@ -1046,14 +1055,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 18),
 
-                  // Connection Status
+                  // ---------- حالة الاتصال ----------
                   Container(
                     padding: const EdgeInsets.symmetric(
                       vertical: 10,
                       horizontal: 16,
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.16),
+                      color: Colors.white.withOpacity(0.16),
                       borderRadius: BorderRadius.circular(30),
                     ),
                     child: Row(
@@ -1085,7 +1094,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 22),
 
-                  // Mini Stats
+                  // ---------- إحصائيات صغيرة ----------
                   Row(
                     children: [
                       Expanded(
@@ -1108,7 +1117,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(width: 10),
                       Expanded(
                         child: _statChip(
-                          'Internal Gate',
+                          'Internal',
                           gate2DoorOpen ? 'Open' : 'Closed',
                           gate2DoorOpen ? AppColors.green : Colors.grey,
                           dark,
@@ -1118,7 +1127,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 10),
 
-                  // House & Gates Visualization
+                  // ---------- رسم المنزل والبوابتين ----------
                   Center(
                     child: SizedBox(
                       width: 260,
@@ -1158,7 +1167,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 10),
 
-                  // Gate Cards
+                  // ---------- بطاقات البوابات ----------
                   _GateCard(
                     title: 'Main Gate',
                     icon: Icons.meeting_room_rounded,
@@ -1188,8 +1197,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-// ================= Helper Widgets =================
+// ================= ودجت مساعدة =================
 
+// موجة زرقاء أعلى الشاشة
 class _TopWaveClipper extends CustomClipper<Path> {
   @override
   Path getClip(Size size) {
@@ -1216,6 +1226,7 @@ class _TopWaveClipper extends CustomClipper<Path> {
   bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
 
+// نقطة نابضة (Pulse) لحالة الاتصال
 class _PulseDot extends StatefulWidget {
   final Color color;
   const _PulseDot({required this.color});
@@ -1256,7 +1267,7 @@ class _PulseDotState extends State<_PulseDot>
                 color: widget.color,
                 boxShadow: [
                   BoxShadow(
-                    color: widget.color.withValues(alpha: 0.6),
+                    color: widget.color.withOpacity(0.6),
                     blurRadius: 6,
                     spreadRadius: 1,
                   ),
@@ -1270,6 +1281,7 @@ class _PulseDotState extends State<_PulseDot>
   }
 }
 
+// باب بوابة بيتحرك بحركة فتح ثلاثية الأبعاد بسيطة حول محور جانبي
 class _GateDoor extends StatelessWidget {
   final bool isOpen;
   final Color color;
@@ -1306,7 +1318,7 @@ class _GateDoor extends StatelessWidget {
           borderRadius: BorderRadius.circular(6),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.15),
+              color: Colors.black.withOpacity(0.15),
               blurRadius: 4,
               offset: const Offset(2, 2),
             ),
@@ -1317,6 +1329,7 @@ class _GateDoor extends StatelessWidget {
   }
 }
 
+// بطاقة بوابة (Main / Internal)
 class _GateCard extends StatelessWidget {
   final String title;
   final IconData icon;
@@ -1345,7 +1358,7 @@ class _GateCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(22),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: dark ? 0.3 : 0.06),
+            color: Colors.black.withOpacity(dark ? 0.3 : 0.06),
             blurRadius: 16,
             offset: const Offset(0, 6),
           ),
@@ -1366,7 +1379,7 @@ class _GateCard extends StatelessWidget {
                   key: ValueKey(isOpen),
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: accent.withValues(alpha: 0.15),
+                    color: accent.withOpacity(0.15),
                     shape: BoxShape.circle,
                   ),
                   child: Icon(
@@ -1422,9 +1435,7 @@ class _GateCard extends StatelessWidget {
             height: 50,
             child: ElevatedButton(
               style: ElevatedButton.styleFrom(
-                backgroundColor: isLoading
-                    ? accent.withValues(alpha: 0.6)
-                    : accent,
+                backgroundColor: isLoading ? accent.withOpacity(0.6) : accent,
                 foregroundColor: Colors.white,
                 elevation: 0,
                 shape: RoundedRectangleBorder(
@@ -1466,6 +1477,7 @@ class _GateCard extends StatelessWidget {
   }
 }
 
+// بانر نجاح متحرك بديل عن الـ SnackBar التقليدي
 class _SuccessBanner extends StatefulWidget {
   final String message;
   final VoidCallback onDone;
