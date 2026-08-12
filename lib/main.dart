@@ -1,56 +1,11 @@
 import 'dart:async';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:local_auth/local_auth.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-
-// ================= الألوان الرسمية للتطبيق =================
-class AppColors {
-  static const navy = Color(0xFF1E3A5F);
-  static const lightBlue = Color(0xFF5B9BD5);
-  static const green = Color(0xFF22C55E);
-  static const red = Color(0xFFEF4444);
-  static const white = Color(0xFFF8FAFC);
-  static const gold = Color(0xFFF4C542);
-  static const darkBg = Color(0xFF0F172A);
-  static const darkCard = Color(0xFF1E293B);
-}
-
-// وضع الإضاءة العام (فاتح/ليلي) — قابل للاستماع من أي مكان في الشجرة
-final ValueNotifier<ThemeMode> themeModeNotifier = ValueNotifier(
-  ThemeMode.light,
-);
-
-final ThemeData lightTheme = ThemeData(
-  useMaterial3: true,
-  fontFamily: 'sans-serif',
-  scaffoldBackgroundColor: AppColors.white,
-  colorScheme: ColorScheme.fromSeed(
-    seedColor: AppColors.navy,
-    brightness: Brightness.light,
-    primary: AppColors.navy,
-    secondary: AppColors.gold,
-  ),
-  cardColor: Colors.white,
-);
-
-final ThemeData darkTheme = ThemeData(
-  useMaterial3: true,
-  fontFamily: 'sans-serif',
-  brightness: Brightness.dark,
-  scaffoldBackgroundColor: AppColors.darkBg,
-  colorScheme: ColorScheme.fromSeed(
-    seedColor: AppColors.lightBlue,
-    brightness: Brightness.dark,
-    primary: AppColors.lightBlue,
-    secondary: AppColors.gold,
-  ),
-  cardColor: AppColors.darkCard,
-);
+import 'package:flutter_vlc_player/flutter_vlc_player.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -59,127 +14,100 @@ void main() async {
   } catch (e) {
     debugPrint('Firebase init notice: $e');
   }
-  final savedDark = await SecureStorageService.instance.getDarkMode();
-  themeModeNotifier.value = savedDark ? ThemeMode.dark : ThemeMode.light;
-  runApp(const SmartGateApp());
+  runApp(const SuperLiveSmartHomeApp());
 }
 
-// ================= تخزين آمن ومشفّر محليًا (PIN / Token / IP / الثيم) =================
-// بيستخدم Keychain على iOS/macOS، Keystore على Android، DPAPI على Windows،
-// و libsecret على Linux. مفيش أي بيانات حساسة متسيبة كنص صريح في الكود.
-class SecureStorageService {
-  SecureStorageService._();
-  static final SecureStorageService instance = SecureStorageService._();
+// =============================================================================
+// SUPERLIVE PLUS DARK THEME COLOR SYSTEM
+// =============================================================================
+class SuperLiveTheme {
+  static const Color background = Color(0xFF121212);
+  static const Color surface = Color(0xFF1E1E1E);
+  static const Color cardBorder = Color(0xFF2E2E2E);
+  static const Color cyanAccent = Color(0xFF00E5FF);
+  static const Color goldAccent = Color(0xFFC5A059);
+  static const Color greenOnline = Color(0xFF00E676);
+  static const Color redAlert = Color(0xFFFF5252);
+  static const Color textPrimary = Color(0xFFF5F5F5);
+  static const Color textSecondary = Color(0xFF9E9E9E);
+}
 
-  final FlutterSecureStorage _storage = const FlutterSecureStorage(
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
-  );
+// =============================================================================
+// DVR / NVR DEVICE MODEL
+// =============================================================================
+class NvrDevice {
+  final String id;
+  String name;
+  String ip;
+  int port;
+  String username;
+  String password;
+  int channelCount;
+  bool isOnline;
 
-  static const _pinKey = 'app_pin';
-  static const _tokenKey = 'device_token';
-  static const _ipKey = 'esp32_ip';
-  static const _darkModeKey = 'dark_mode';
+  NvrDevice({
+    required this.id,
+    required this.name,
+    required this.ip,
+    this.port = 554,
+    required this.username,
+    required this.password,
+    this.channelCount = 4,
+    this.isOnline = true,
+  });
 
-  static const String _defaultIp = '192.168.1.50';
-
-  String _generateToken() {
-    final randomStr = Random.secure()
-        .nextInt(999999)
-        .toString()
-        .padLeft(6, '0');
-    return 'SEC_TOK_$randomStr';
-  }
-
-  String _generatePin() {
-    // رمز مبدئي عشوائي بدل الرقم الثابت 1234؛ المستخدم يقدر يغيّره
-    // من نافذة الإعدادات فور أول تشغيل.
-    final rnd = Random.secure();
-    return List.generate(4, (_) => rnd.nextInt(10)).join();
-  }
-
-  Future<String> getPin() async {
-    final existing = await _storage.read(key: _pinKey);
-    if (existing != null && existing.isNotEmpty) return existing;
-    final generated = _generatePin();
-    await _storage.write(key: _pinKey, value: generated);
-    return generated;
-  }
-
-  Future<void> setPin(String pin) async {
-    await _storage.write(key: _pinKey, value: pin);
-  }
-
-  Future<String> getToken() async {
-    final existing = await _storage.read(key: _tokenKey);
-    if (existing != null && existing.isNotEmpty) return existing;
-    final generated = _generateToken();
-    await _storage.write(key: _tokenKey, value: generated);
-    return generated;
-  }
-
-  Future<String> regenerateToken() async {
-    final generated = _generateToken();
-    await _storage.write(key: _tokenKey, value: generated);
-    return generated;
-  }
-
-  Future<String> getIp() async {
-    final existing = await _storage.read(key: _ipKey);
-    if (existing != null && existing.isNotEmpty) return existing;
-    await _storage.write(key: _ipKey, value: _defaultIp);
-    return _defaultIp;
-  }
-
-  Future<void> setIp(String ip) async {
-    await _storage.write(key: _ipKey, value: ip);
-  }
-
-  Future<bool> getDarkMode() async {
-    final v = await _storage.read(key: _darkModeKey);
-    return v == 'true';
-  }
-
-  Future<void> setDarkMode(bool value) async {
-    await _storage.write(key: _darkModeKey, value: value.toString());
+  String getRtspUrl(int channelIndex, {bool isSubStream = true}) {
+    final authPart = (username.isNotEmpty && password.isNotEmpty)
+        ? '$username:$password@'
+        : '';
+    final streamType = isSubStream ? '2' : '1';
+    return 'rtsp://$authPart$ip:$port/Streaming/Channels/${channelIndex}0$streamType';
   }
 }
 
-class SmartGateApp extends StatelessWidget {
-  const SmartGateApp({super.key});
+// =============================================================================
+// MAIN APPLICATION ENTRY POINT
+// =============================================================================
+class SuperLiveSmartHomeApp extends StatelessWidget {
+  const SuperLiveSmartHomeApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<ThemeMode>(
-      valueListenable: themeModeNotifier,
-      builder: (context, mode, _) {
-        return MaterialApp(
-          debugShowCheckedModeBanner: false,
-          title: 'Smart Access Control',
-          theme: lightTheme,
-          darkTheme: darkTheme,
-          themeMode: mode,
-          home: const LockScreen(),
-        );
-      },
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'SuperLive Smart Home',
+      theme: ThemeData.dark().copyWith(
+        scaffoldBackgroundColor: SuperLiveTheme.background,
+        colorScheme: const ColorScheme.dark(
+          primary: SuperLiveTheme.cyanAccent,
+          surface: SuperLiveTheme.surface,
+        ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: SuperLiveTheme.surface,
+          foregroundColor: SuperLiveTheme.textPrimary,
+          elevation: 0,
+        ),
+      ),
+      home: const AppLockScreen(),
     );
   }
 }
 
-// ================= شاشة قفل البصمة وكلمة المرور (Fingerprint & Passcode Lock) =================
-class LockScreen extends StatefulWidget {
-  const LockScreen({super.key});
+// =============================================================================
+// SECURITY APP LOCK SCREEN (BIOMETRIC & PASSCODE)
+// =============================================================================
+class AppLockScreen extends StatefulWidget {
+  const AppLockScreen({super.key});
 
   @override
-  State<LockScreen> createState() => _LockScreenState();
+  State<AppLockScreen> createState() => _AppLockScreenState();
 }
 
-class _LockScreenState extends State<LockScreen> {
+class _AppLockScreenState extends State<AppLockScreen> {
   final LocalAuthentication auth = LocalAuthentication();
   final TextEditingController _pinController = TextEditingController();
-  final _storage = SecureStorageService.instance;
 
-  String? savedPin; // يتحمّل من التخزين المشفّر، مفيش قيمة ثابتة في الكود
-  bool isLoadingPin = true;
+  String savedPin = '1234';
   bool isBiometricSupported = false;
   bool isAuthenticating = false;
   String errorMessage = '';
@@ -187,63 +115,36 @@ class _LockScreenState extends State<LockScreen> {
   @override
   void initState() {
     super.initState();
-    _initLock();
-  }
-
-  Future<void> _initLock() async {
-    final pin = await _storage.getPin();
-    if (!mounted) return;
-    setState(() {
-      savedPin = pin;
-      isLoadingPin = false;
-    });
-    await _checkBiometrics();
+    _checkBiometrics();
   }
 
   Future<void> _checkBiometrics() async {
     try {
-      final bool canAuthenticateWithBiometrics = await auth.canCheckBiometrics;
-      final bool isDeviceSupported = await auth.isDeviceSupported();
-
-      if (mounted) {
-        setState(() {
-          isBiometricSupported =
-              canAuthenticateWithBiometrics || isDeviceSupported;
-        });
-      }
-
-      if (isBiometricSupported) {
-        _authenticateWithBiometrics();
-      }
+      final bool canCheck = await auth.canCheckBiometrics;
+      final bool isSupported = await auth.isDeviceSupported();
+      if (mounted)
+        setState(() => isBiometricSupported = canCheck || isSupported);
+      if (isBiometricSupported) _authenticateBiometrics();
     } catch (e) {
       debugPrint('Biometric check error: $e');
     }
   }
 
-  Future<void> _authenticateWithBiometrics() async {
+  Future<void> _authenticateBiometrics() async {
     try {
       setState(() {
         isAuthenticating = true;
         errorMessage = '';
       });
-
       final bool authenticated = await auth.authenticate(
-        localizedReason: 'يرجى استخدام البصمة للتحكم في البوابة',
+        localizedReason: 'Authenticate to access SuperLive Smart Home',
       );
-
-      if (authenticated && mounted) {
-        _unlockApp();
-      }
+      if (authenticated && mounted) _unlockApp();
     } on PlatformException catch (e) {
-      setState(() {
-        errorMessage = 'فشلت البصمة: ${e.message}';
-      });
+      if (mounted)
+        setState(() => errorMessage = 'Biometric Error: ${e.message}');
     } finally {
-      if (mounted) {
-        setState(() {
-          isAuthenticating = false;
-        });
-      }
+      if (mounted) setState(() => isAuthenticating = false);
     }
   }
 
@@ -251,9 +152,7 @@ class _LockScreenState extends State<LockScreen> {
     if (_pinController.text == savedPin) {
       _unlockApp();
     } else {
-      setState(() {
-        errorMessage = 'رمز الحماية غير صحيح!';
-      });
+      setState(() => errorMessage = 'Invalid Passcode!');
       _pinController.clear();
     }
   }
@@ -261,21 +160,14 @@ class _LockScreenState extends State<LockScreen> {
   void _unlockApp() {
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(builder: (_) => const MainNavigator()),
+      MaterialPageRoute(builder: (_) => const MainNavigationWrapper()),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    if (isLoadingPin) {
-      return const Scaffold(
-        backgroundColor: AppColors.navy,
-        body: Center(child: CircularProgressIndicator(color: Colors.white)),
-      );
-    }
-
     return Scaffold(
-      backgroundColor: const Color(0xFF8A9EA7),
+      backgroundColor: SuperLiveTheme.background,
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -284,44 +176,54 @@ class _LockScreenState extends State<LockScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: const BoxDecoration(
-                    color: AppColors.navy,
+                  padding: const EdgeInsets.all(22),
+                  decoration: BoxDecoration(
+                    color: SuperLiveTheme.surface,
                     shape: BoxShape.circle,
+                    border: Border.all(
+                      color: SuperLiveTheme.cyanAccent,
+                      width: 2,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: SuperLiveTheme.cyanAccent.withValues(alpha: 0.2),
+                        blurRadius: 20,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
                   ),
                   child: const Icon(
-                    Icons.fingerprint_rounded,
-                    size: 70,
-                    color: Colors.white,
+                    Icons.security_rounded,
+                    size: 64,
+                    color: SuperLiveTheme.cyanAccent,
                   ),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 24),
                 const Text(
-                  'تأمين البوابة الذكية 🔒',
+                  'SUPERLIVE SURVEILLANCE',
                   style: TextStyle(
-                    fontSize: 26,
+                    fontSize: 22,
                     fontWeight: FontWeight.bold,
-                    color: Colors.white,
+                    letterSpacing: 2,
+                    color: SuperLiveTheme.textPrimary,
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 const Text(
-                  'يرجى تأكيد الهوية بالبصمة أو الرمز للدخول',
-                  style: TextStyle(fontSize: 14, color: Colors.white70),
+                  'Enter PIN or Use Biometrics to Access Controls',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: SuperLiveTheme.textSecondary,
+                  ),
                 ),
-                const SizedBox(height: 32),
+                const SizedBox(height: 36),
+
                 Container(
                   padding: const EdgeInsets.all(24),
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: SuperLiveTheme.surface,
                     borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withAlpha(20),
-                        blurRadius: 15,
-                        offset: const Offset(0, 5),
-                      ),
-                    ],
+                    border: Border.all(color: SuperLiveTheme.cardBorder),
                   ),
                   child: Column(
                     children: [
@@ -329,9 +231,9 @@ class _LockScreenState extends State<LockScreen> {
                         Text(
                           errorMessage,
                           style: const TextStyle(
-                            color: Colors.red,
+                            color: SuperLiveTheme.redAlert,
                             fontWeight: FontWeight.bold,
-                            fontSize: 14,
+                            fontSize: 13,
                           ),
                         ),
                         const SizedBox(height: 14),
@@ -343,41 +245,50 @@ class _LockScreenState extends State<LockScreen> {
                         maxLength: 4,
                         textAlign: TextAlign.center,
                         style: const TextStyle(
-                          fontSize: 24,
-                          letterSpacing: 8,
+                          fontSize: 26,
+                          letterSpacing: 10,
                           fontWeight: FontWeight.bold,
+                          color: SuperLiveTheme.textPrimary,
                         ),
                         decoration: InputDecoration(
                           hintText: '••••',
                           counterText: '',
-                          labelText: 'رمز الحماية (Passcode)',
+                          labelText: 'Security PIN',
+                          labelStyle: const TextStyle(
+                            color: SuperLiveTheme.cyanAccent,
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: const BorderSide(
+                              color: SuperLiveTheme.cyanAccent,
+                              width: 2,
+                            ),
+                          ),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(16),
                           ),
                         ),
                         onChanged: (val) {
-                          if (val.length == 4) {
-                            _verifyPin();
-                          }
+                          if (val.length == 4) _verifyPin();
                         },
                       ),
                       const SizedBox(height: 20),
                       SizedBox(
                         width: double.infinity,
-                        height: 48,
+                        height: 50,
                         child: ElevatedButton(
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.navy,
-                            foregroundColor: Colors.white,
+                            backgroundColor: SuperLiveTheme.cyanAccent,
+                            foregroundColor: Colors.black,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(14),
                             ),
                           ),
                           onPressed: _verifyPin,
                           child: const Text(
-                            'دخول بالرمز',
+                            'UNLOCK APP',
                             style: TextStyle(
-                              fontSize: 16,
+                              fontSize: 15,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
@@ -387,26 +298,28 @@ class _LockScreenState extends State<LockScreen> {
                         const SizedBox(height: 14),
                         OutlinedButton.icon(
                           style: OutlinedButton.styleFrom(
-                            minimumSize: const Size(double.infinity, 48),
-                            side: const BorderSide(color: AppColors.navy),
+                            minimumSize: const Size(double.infinity, 50),
+                            side: const BorderSide(
+                              color: SuperLiveTheme.cyanAccent,
+                            ),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(14),
                             ),
                           ),
                           icon: const Icon(
                             Icons.fingerprint_rounded,
-                            color: AppColors.navy,
+                            color: SuperLiveTheme.cyanAccent,
                           ),
                           label: const Text(
-                            'استخدام البصمة (Fingerprint)',
+                            'BIOMETRIC UNLOCK',
                             style: TextStyle(
-                              color: AppColors.navy,
+                              color: SuperLiveTheme.cyanAccent,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
                           onPressed: isAuthenticating
                               ? null
-                              : _authenticateWithBiometrics,
+                              : _authenticateBiometrics,
                         ),
                       ],
                     ],
@@ -421,906 +334,88 @@ class _LockScreenState extends State<LockScreen> {
   }
 }
 
-// ================= محمّل الحالة قبل عرض الشاشة الرئيسية =================
-class MainNavigator extends StatefulWidget {
-  const MainNavigator({super.key});
+// =============================================================================
+// MAIN NAVIGATION WRAPPER (4-TAB SUPERLIVE NAVIGATION BAR)
+// =============================================================================
+class MainNavigationWrapper extends StatefulWidget {
+  const MainNavigationWrapper({super.key});
 
   @override
-  State<MainNavigator> createState() => _MainNavigatorState();
+  State<MainNavigationWrapper> createState() => _MainNavigationWrapperState();
 }
 
-class _MainNavigatorState extends State<MainNavigator> {
-  final _storage = SecureStorageService.instance;
-  String? esp32Ip;
-  String? deviceToken;
-  bool isLoading = true;
+class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
+  int _currentIndex = 0;
+  String esp32Ip = '192.168.1.50';
 
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
+  final List<NvrDevice> devices = [
+    NvrDevice(
+      id: 'dvr_01',
+      name: 'Main Home NVR',
+      ip: '192.168.1.100',
+      port: 554,
+      username: 'admin',
+      password: 'admin123',
+      channelCount: 4,
+      isOnline: true,
+    ),
+  ];
 
-  Future<void> _load() async {
-    final ip = await _storage.getIp();
-    final token = await _storage.getToken();
-    if (!mounted) return;
+  void _addDevice(NvrDevice newDevice) {
     setState(() {
-      esp32Ip = ip;
-      deviceToken = token;
-      isLoading = false;
+      devices.add(newDevice);
     });
-  }
-
-  Future<void> _updateIp(String ip) async {
-    await _storage.setIp(ip);
-    if (mounted) setState(() => esp32Ip = ip);
-  }
-
-  Future<void> _regenerateToken() async {
-    final t = await _storage.regenerateToken();
-    if (mounted) setState(() => deviceToken = t);
   }
 
   @override
   Widget build(BuildContext context) {
-    if (isLoading || esp32Ip == null || deviceToken == null) {
-      return const Scaffold(
-        backgroundColor: AppColors.navy,
-        body: Center(child: CircularProgressIndicator(color: Colors.white)),
-      );
-    }
-    return HomeScreen(
-      esp32Ip: esp32Ip!,
-      deviceToken: deviceToken!,
-      onIpChanged: _updateIp,
-      onGenerateNewToken: _regenerateToken,
-    );
-  }
-}
-
-// ================= الشاشة الرئيسية (Smart Home Style) =================
-class HomeScreen extends StatefulWidget {
-  final String esp32Ip;
-  final String deviceToken;
-  final ValueChanged<String> onIpChanged;
-  final VoidCallback onGenerateNewToken;
-
-  const HomeScreen({
-    super.key,
-    required this.esp32Ip,
-    required this.deviceToken,
-    required this.onIpChanged,
-    required this.onGenerateNewToken,
-  });
-
-  @override
-  State<HomeScreen> createState() => _HomeScreenState();
-}
-
-class _HomeScreenState extends State<HomeScreen> {
-  final _storage = SecureStorageService.instance;
-
-  bool isConnected = false;
-  bool isGate1Loading = false;
-  bool isGate2Loading = false;
-  bool gate1DoorOpen = false;
-  bool gate2DoorOpen = false;
-
-  DateTime _now = DateTime.now();
-  Timer? _clockTimer;
-  Timer? _gate1CloseTimer;
-  Timer? _gate2CloseTimer;
-
-  @override
-  void initState() {
-    super.initState();
-    checkConnection();
-    _clockTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted) setState(() => _now = DateTime.now());
-    });
-  }
-
-  @override
-  void dispose() {
-    _clockTimer?.cancel();
-    _gate1CloseTimer?.cancel();
-    _gate2CloseTimer?.cancel();
-    super.dispose();
-  }
-
-  Future<void> checkConnection() async {
-    try {
-      final response = await http
-          .get(Uri.parse('http://${widget.esp32Ip}/'))
-          .timeout(const Duration(seconds: 3));
-      if (mounted) setState(() => isConnected = response.statusCode == 200);
-    } catch (_) {
-      if (mounted) setState(() => isConnected = false);
-    }
-  }
-
-  Future<void> sendEspCommand(String endpoint) async {
-    try {
-      final response = await http.get(
-        Uri.parse('http://${widget.esp32Ip}/$endpoint'),
-      );
-      if (mounted) setState(() => isConnected = true);
-      debugPrint('ESP response: ${response.body}');
-    } catch (e) {
-      if (mounted) setState(() => isConnected = false);
-      debugPrint('ESP command note: $e');
-    }
-  }
-
-  Future<void> _triggerMainGate() async {
-    if (isGate1Loading) return;
-    setState(() => isGate1Loading = true);
-    try {
-      if (Firebase.apps.isNotEmpty) {
-        try {
-          final ref = FirebaseDatabase.instance.ref(
-            "devices/${widget.deviceToken}/gate1",
-          );
-          await ref.set({"trigger": true, "timestamp": ServerValue.timestamp});
-        } catch (e) {
-          debugPrint('Firebase write note: $e');
-        }
-      }
-      await sendEspCommand('gate1/open?token=${widget.deviceToken}');
-    } finally {
-      if (mounted) {
-        setState(() {
-          isGate1Loading = false;
-          gate1DoorOpen = true;
-        });
-        _showSuccessBanner('Main Gate Opened Successfully ✅');
-        _gate1CloseTimer?.cancel();
-        _gate1CloseTimer = Timer(const Duration(seconds: 5), () {
-          if (mounted) setState(() => gate1DoorOpen = false);
-        });
-      }
-    }
-  }
-
-  Future<void> _triggerInternalGate() async {
-    if (isGate2Loading) return;
-    setState(() => isGate2Loading = true);
-    try {
-      if (Firebase.apps.isNotEmpty) {
-        try {
-          final ref = FirebaseDatabase.instance.ref(
-            "devices/${widget.deviceToken}/gate2",
-          );
-          await ref.set({"trigger": true, "timestamp": ServerValue.timestamp});
-        } catch (e) {
-          debugPrint('Firebase write note: $e');
-        }
-      }
-      await sendEspCommand('gate2/open?token=${widget.deviceToken}');
-    } finally {
-      if (mounted) {
-        setState(() {
-          isGate2Loading = false;
-          gate2DoorOpen = true;
-        });
-        _showSuccessBanner('Internal Gate Opened Successfully ✅');
-        _gate2CloseTimer?.cancel();
-        _gate2CloseTimer = Timer(const Duration(seconds: 5), () {
-          if (mounted) setState(() => gate2DoorOpen = false);
-        });
-      }
-    }
-  }
-
-  void _showSuccessBanner(String message) {
-    final overlayState = Overlay.of(context);
-    late OverlayEntry entry;
-    entry = OverlayEntry(
-      builder: (ctx) => Positioned(
-        top: MediaQuery.of(ctx).padding.top + 12,
-        left: 20,
-        right: 20,
-        child: _SuccessBanner(message: message, onDone: () => entry.remove()),
+    final List<Widget> pages = [
+      SuperLiveViewTab(device: devices.isNotEmpty ? devices.first : null),
+      GatesAutomationTab(esp32Ip: esp32Ip),
+      DeviceListTab(devices: devices, onDeviceAdded: _addDevice),
+      SettingsTab(
+        esp32Ip: esp32Ip,
+        onEspIpSaved: (newIp) => setState(() => esp32Ip = newIp),
       ),
-    );
-    overlayState.insert(entry);
-  }
-
-  Future<void> _showChangePinDialog(BuildContext parentContext) async {
-    final currentPinController = TextEditingController();
-    final newPinController = TextEditingController();
-    final confirmPinController = TextEditingController();
-    String? dialogError;
-
-    await showDialog(
-      context: parentContext,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(18),
-              ),
-              title: const Text(
-                'تغيير رمز الحماية',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (dialogError != null) ...[
-                    Text(
-                      dialogError!,
-                      style: const TextStyle(color: Colors.red, fontSize: 13),
-                    ),
-                    const SizedBox(height: 10),
-                  ],
-                  TextField(
-                    controller: currentPinController,
-                    keyboardType: TextInputType.number,
-                    obscureText: true,
-                    maxLength: 4,
-                    decoration: const InputDecoration(
-                      labelText: 'الرمز الحالي',
-                      counterText: '',
-                    ),
-                  ),
-                  TextField(
-                    controller: newPinController,
-                    keyboardType: TextInputType.number,
-                    obscureText: true,
-                    maxLength: 4,
-                    decoration: const InputDecoration(
-                      labelText: 'الرمز الجديد',
-                      counterText: '',
-                    ),
-                  ),
-                  TextField(
-                    controller: confirmPinController,
-                    keyboardType: TextInputType.number,
-                    obscureText: true,
-                    maxLength: 4,
-                    decoration: const InputDecoration(
-                      labelText: 'تأكيد الرمز الجديد',
-                      counterText: '',
-                    ),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('إلغاء'),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.navy,
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: () async {
-                    final storedPin = await _storage.getPin();
-                    if (currentPinController.text != storedPin) {
-                      setDialogState(
-                        () => dialogError = 'الرمز الحالي غير صحيح',
-                      );
-                      return;
-                    }
-                    if (newPinController.text.length != 4 ||
-                        int.tryParse(newPinController.text) == null) {
-                      setDialogState(
-                        () => dialogError = 'الرمز الجديد لازم يكون 4 أرقام',
-                      );
-                      return;
-                    }
-                    if (newPinController.text != confirmPinController.text) {
-                      setDialogState(
-                        () => dialogError = 'الرمزين غير متطابقين',
-                      );
-                      return;
-                    }
-                    await _storage.setPin(newPinController.text);
-                    if (dialogContext.mounted)
-                      Navigator.of(dialogContext).pop();
-                    _showSuccessBanner('تم تغيير رمز الحماية بنجاح 🔐');
-                  },
-                  child: const Text('حفظ'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Future<void> _openSettingsDialog() async {
-    final ipController = TextEditingController(text: widget.esp32Ip);
-    await showDialog(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
-              title: const Row(
-                children: [
-                  Icon(Icons.settings_rounded, color: AppColors.navy),
-                  SizedBox(width: 8),
-                  Text(
-                    'الإعدادات',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'عنوان ESP32 IP',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    TextField(
-                      controller: ipController,
-                      decoration: InputDecoration(
-                        hintText: '192.168.1.50',
-                        isDense: true,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'الوضع الليلي 🌙',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 13,
-                          ),
-                        ),
-                        ValueListenableBuilder<ThemeMode>(
-                          valueListenable: themeModeNotifier,
-                          builder: (context, mode, _) {
-                            return Switch(
-                              value: mode == ThemeMode.dark,
-                              activeColor: AppColors.navy,
-                              onChanged: (val) async {
-                                themeModeNotifier.value = val
-                                    ? ThemeMode.dark
-                                    : ThemeMode.light;
-                                await _storage.setDarkMode(val);
-                                setDialogState(() {});
-                              },
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 18),
-                    const Text(
-                      'توكن الأمان',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            widget.deviceToken,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.navy,
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.copy_rounded, size: 20),
-                          tooltip: 'نسخ التوكن',
-                          onPressed: () {
-                            Clipboard.setData(
-                              ClipboardData(text: widget.deviceToken),
-                            );
-                          },
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.refresh_rounded, size: 20),
-                          tooltip: 'توليد توكن جديد',
-                          onPressed: () {
-                            widget.onGenerateNewToken();
-                            setDialogState(() {});
-                          },
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: TextButton.icon(
-                        onPressed: () => _showChangePinDialog(context),
-                        icon: const Icon(Icons.lock_reset_rounded, size: 18),
-                        label: const Text('تغيير رمز الحماية'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('إغلاق'),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.navy,
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: () {
-                    widget.onIpChanged(ipController.text.trim());
-                    Navigator.of(dialogContext).pop();
-                    _showSuccessBanner('تم حفظ الإعدادات ✅');
-                  },
-                  child: const Text('حفظ'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  String _formatDateTime(DateTime dt) {
-    const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    const months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
     ];
-    final wd = weekdays[dt.weekday - 1];
-    final mo = months[dt.month - 1];
-    final hour12 = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
-    final ampm = dt.hour >= 12 ? 'PM' : 'AM';
-    final minute = dt.minute.toString().padLeft(2, '0');
-    return '$wd, $mo ${dt.day} ${dt.year} • $hour12:$minute $ampm';
-  }
 
-  Widget _statChip(String label, String value, Color color, bool dark) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-      decoration: BoxDecoration(
-        color: dark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(dark ? 0.25 : 0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(shape: BoxShape.circle, color: color),
-              ),
-              const SizedBox(width: 5),
-              Flexible(
-                child: Text(
-                  value,
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                    color: dark ? Colors.white : const Color(0xFF1E293B),
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 3),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 10,
-              color: dark ? Colors.white54 : Colors.black45,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
-      backgroundColor: dark ? AppColors.darkBg : AppColors.white,
-      body: Stack(
-        children: [
-          ClipPath(
-            clipper: _TopWaveClipper(),
-            child: Container(
-              height: 230,
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [AppColors.navy, AppColors.lightBlue],
-                ),
-              ),
-            ),
+      body: IndexedStack(index: _currentIndex, children: pages),
+      bottomNavigationBar: Container(
+        decoration: const BoxDecoration(
+          color: SuperLiveTheme.surface,
+          border: Border(
+            top: BorderSide(color: SuperLiveTheme.cardBorder, width: 1),
           ),
-          SafeArea(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 10, 20, 30),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // ---------- الهيدر ----------
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.18),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            const Icon(
-                              Icons.sensor_door_rounded,
-                              color: Colors.white,
-                              size: 24,
-                            ),
-                            Positioned(
-                              right: -3,
-                              bottom: -3,
-                              child: Container(
-                                padding: const EdgeInsets.all(2),
-                                decoration: const BoxDecoration(
-                                  color: AppColors.gold,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(
-                                  Icons.wifi_rounded,
-                                  size: 10,
-                                  color: AppColors.navy,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Welcome Home, Ahmed 👋',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              _formatDateTime(_now),
-                              style: const TextStyle(
-                                color: Colors.white70,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(
-                          Icons.settings_rounded,
-                          color: Colors.white,
-                        ),
-                        onPressed: _openSettingsDialog,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 18),
-
-                  // ---------- حالة الاتصال ----------
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 10,
-                      horizontal: 16,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.16),
-                      borderRadius: BorderRadius.circular(30),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _PulseDot(
-                          color: isConnected ? AppColors.green : AppColors.red,
-                        ),
-                        const SizedBox(width: 10),
-                        Text(
-                          isConnected ? 'ESP32 Online' : 'ESP32 Offline',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        GestureDetector(
-                          onTap: checkConnection,
-                          child: const Icon(
-                            Icons.refresh_rounded,
-                            color: Colors.white70,
-                            size: 18,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 22),
-
-                  // ---------- إحصائيات صغيرة ----------
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _statChip(
-                          'Connection',
-                          isConnected ? 'Online' : 'Offline',
-                          isConnected ? AppColors.green : AppColors.red,
-                          dark,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: _statChip(
-                          'Main Gate',
-                          gate1DoorOpen ? 'Open' : 'Closed',
-                          gate1DoorOpen ? AppColors.green : Colors.grey,
-                          dark,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: _statChip(
-                          'Internal',
-                          gate2DoorOpen ? 'Open' : 'Closed',
-                          gate2DoorOpen ? AppColors.green : Colors.grey,
-                          dark,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-
-                  // ---------- رسم المنزل والبوابتين ----------
-                  Center(
-                    child: SizedBox(
-                      width: 260,
-                      height: 150,
-                      child: Stack(
-                        alignment: Alignment.bottomCenter,
-                        children: [
-                          Positioned(
-                            bottom: 14,
-                            child: Icon(
-                              Icons.cottage_rounded,
-                              size: 88,
-                              color: dark ? Colors.white : AppColors.navy,
-                            ),
-                          ),
-                          Positioned(
-                            bottom: 22,
-                            left: 14,
-                            child: _GateDoor(
-                              isOpen: gate1DoorOpen,
-                              color: AppColors.gold,
-                              hinge: Alignment.centerRight,
-                            ),
-                          ),
-                          Positioned(
-                            bottom: 22,
-                            right: 14,
-                            child: _GateDoor(
-                              isOpen: gate2DoorOpen,
-                              color: AppColors.green,
-                              hinge: Alignment.centerLeft,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-
-                  // ---------- بطاقات البوابات ----------
-                  _GateCard(
-                    title: 'Main Gate',
-                    icon: Icons.meeting_room_rounded,
-                    isOpen: gate1DoorOpen,
-                    isLoading: isGate1Loading,
-                    accent: AppColors.gold,
-                    dark: dark,
-                    onPressed: _triggerMainGate,
-                  ),
-                  const SizedBox(height: 18),
-                  _GateCard(
-                    title: 'Internal Gate',
-                    icon: Icons.garage_rounded,
-                    isOpen: gate2DoorOpen,
-                    isLoading: isGate2Loading,
-                    accent: AppColors.green,
-                    dark: dark,
-                    onPressed: _triggerInternalGate,
-                  ),
-                ],
-              ),
+        ),
+        child: BottomNavigationBar(
+          currentIndex: _currentIndex,
+          backgroundColor: SuperLiveTheme.surface,
+          selectedItemColor: SuperLiveTheme.cyanAccent,
+          unselectedItemColor: SuperLiveTheme.textSecondary,
+          type: BottomNavigationBarType.fixed,
+          elevation: 0,
+          onTap: (index) => setState(() => _currentIndex = index),
+          items: const [
+            BottomNavigationBarItem(
+              icon: Icon(Icons.videocam_outlined),
+              activeIcon: Icon(Icons.videocam),
+              label: 'Live View',
             ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ================= ودجت مساعدة =================
-
-// موجة زرقاء أعلى الشاشة
-class _TopWaveClipper extends CustomClipper<Path> {
-  @override
-  Path getClip(Size size) {
-    final path = Path();
-    path.lineTo(0, size.height * 0.72);
-    path.quadraticBezierTo(
-      size.width * 0.25,
-      size.height,
-      size.width * 0.5,
-      size.height * 0.82,
-    );
-    path.quadraticBezierTo(
-      size.width * 0.75,
-      size.height * 0.64,
-      size.width,
-      size.height * 0.86,
-    );
-    path.lineTo(size.width, 0);
-    path.close();
-    return path;
-  }
-
-  @override
-  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
-}
-
-// نقطة نابضة (Pulse) لحالة الاتصال
-class _PulseDot extends StatefulWidget {
-  final Color color;
-  const _PulseDot({required this.color});
-
-  @override
-  State<_PulseDot> createState() => _PulseDotState();
-}
-
-class _PulseDotState extends State<_PulseDot>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 900),
-  )..repeat(reverse: true);
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, child) {
-        final scale = 0.85 + (_controller.value * 0.35);
-        final opacity = 0.55 + (_controller.value * 0.45);
-        return Opacity(
-          opacity: opacity,
-          child: Transform.scale(
-            scale: scale,
-            child: Container(
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: widget.color,
-                boxShadow: [
-                  BoxShadow(
-                    color: widget.color.withOpacity(0.6),
-                    blurRadius: 6,
-                    spreadRadius: 1,
-                  ),
-                ],
-              ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.sensor_door_outlined),
+              activeIcon: Icon(Icons.sensor_door),
+              label: 'Gates & Rules',
             ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-// باب بوابة بيتحرك بحركة فتح ثلاثية الأبعاد بسيطة حول محور جانبي
-class _GateDoor extends StatelessWidget {
-  final bool isOpen;
-  final Color color;
-  final Alignment hinge;
-  const _GateDoor({
-    required this.isOpen,
-    required this.color,
-    required this.hinge,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final targetAngle = isOpen
-        ? (hinge == Alignment.centerLeft ? 1.15 : -1.15)
-        : 0.0;
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0, end: targetAngle),
-      duration: const Duration(milliseconds: 700),
-      curve: Curves.easeInOut,
-      builder: (context, value, child) {
-        return Transform(
-          alignment: hinge,
-          transform: Matrix4.identity()
-            ..setEntry(3, 2, 0.0012)
-            ..rotateY(value),
-          child: child,
-        );
-      },
-      child: Container(
-        width: 26,
-        height: 58,
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(6),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.15),
-              blurRadius: 4,
-              offset: const Offset(2, 2),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.view_list_rounded),
+              activeIcon: Icon(Icons.list_alt_rounded),
+              label: 'Device List',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.settings_outlined),
+              activeIcon: Icon(Icons.settings),
+              label: 'Settings',
             ),
           ],
         ),
@@ -1329,64 +424,877 @@ class _GateDoor extends StatelessWidget {
   }
 }
 
-// بطاقة بوابة (Main / Internal)
-class _GateCard extends StatelessWidget {
-  final String title;
-  final IconData icon;
-  final bool isOpen;
-  final bool isLoading;
-  final Color accent;
-  final bool dark;
-  final VoidCallback onPressed;
+// =============================================================================
+// TAB 1: SUPERLIVE PLUS STYLE LIVE VIEW TAB (RTSP MULTI-GRID & PTZ TOOLBAR)
+// =============================================================================
+class SuperLiveViewTab extends StatefulWidget {
+  final NvrDevice? device;
+  const SuperLiveViewTab({super.key, required this.device});
 
-  const _GateCard({
-    required this.title,
-    required this.icon,
-    required this.isOpen,
-    required this.isLoading,
-    required this.accent,
-    required this.dark,
-    required this.onPressed,
-  });
+  @override
+  State<SuperLiveViewTab> createState() => _SuperLiveViewTabState();
+}
+
+class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
+  int gridLayout = 1; // 1 = 1x1, 4 = 2x2, 9 = 3x3
+  int selectedChannel = 1;
+  bool isMuted = true;
+  bool isRecording = false;
+  bool isIntercomActive = false;
+  bool isHdMode = true;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: dark ? AppColors.darkCard : Colors.white,
-        borderRadius: BorderRadius.circular(22),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(dark ? 0.3 : 0.06),
-            blurRadius: 16,
-            offset: const Offset(0, 6),
+    final device = widget.device;
+
+    return Scaffold(
+      backgroundColor: SuperLiveTheme.background,
+      appBar: AppBar(
+        title: Text(
+          device != null
+              ? '${device.name} (Live View)'
+              : 'SuperLive CCTV Stream',
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.flip_to_front_rounded),
+            tooltip: 'Aspect Ratio',
+            onPressed: () {},
+          ),
+          IconButton(
+            icon: Icon(
+              isHdMode ? Icons.hd_rounded : Icons.sd_rounded,
+              color: SuperLiveTheme.cyanAccent,
+            ),
+            tooltip: 'HD/SD Quality',
+            onPressed: () => setState(() => isHdMode = !isHdMode),
           ),
         ],
       ),
+      body: Column(
+        children: [
+          // Top Section: SuperLive Multi-Grid Player Container
+          Expanded(
+            flex: 3,
+            child: Container(
+              color: Colors.black,
+              child: device == null
+                  ? const Center(
+                      child: Text(
+                        'No DVR Device Configured',
+                        style: TextStyle(color: SuperLiveTheme.textSecondary),
+                      ),
+                    )
+                  : _buildGridPlayerView(device),
+            ),
+          ),
+
+          // Middle Section: SuperLive Plus Control Bar (Snapshot, Record, Audio, Intercom)
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+            color: SuperLiveTheme.surface,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                IconButton(
+                  icon: Icon(
+                    isMuted
+                        ? Icons.volume_off_rounded
+                        : Icons.volume_up_rounded,
+                    color: isMuted
+                        ? SuperLiveTheme.textSecondary
+                        : SuperLiveTheme.cyanAccent,
+                  ),
+                  tooltip: 'Mute/Unmute',
+                  onPressed: () => setState(() => isMuted = !isMuted),
+                ),
+                IconButton(
+                  icon: Icon(
+                    Icons.mic_rounded,
+                    color: isIntercomActive
+                        ? SuperLiveTheme.cyanAccent
+                        : SuperLiveTheme.textSecondary,
+                  ),
+                  tooltip: 'Two-Way Intercom',
+                  onPressed: () =>
+                      setState(() => isIntercomActive = !isIntercomActive),
+                ),
+                IconButton(
+                  icon: const Icon(
+                    Icons.camera_alt_rounded,
+                    color: SuperLiveTheme.textPrimary,
+                  ),
+                  tooltip: 'Snapshot',
+                  onPressed: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Snapshot saved to gallery 📸'),
+                        backgroundColor: SuperLiveTheme.cyanAccent,
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  },
+                ),
+                IconButton(
+                  icon: Icon(
+                    Icons.fiber_manual_record_rounded,
+                    color: isRecording
+                        ? SuperLiveTheme.redAlert
+                        : SuperLiveTheme.textSecondary,
+                  ),
+                  tooltip: 'Record Feed',
+                  onPressed: () {
+                    setState(() => isRecording = !isRecording);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          isRecording
+                              ? 'Recording started 🔴'
+                              : 'Recording saved',
+                        ),
+                        backgroundColor: isRecording
+                            ? SuperLiveTheme.redAlert
+                            : SuperLiveTheme.cyanAccent,
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(
+                    Icons.fullscreen_rounded,
+                    color: SuperLiveTheme.cyanAccent,
+                  ),
+                  tooltip: 'Fullscreen View',
+                  onPressed: () {
+                    if (device != null) {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => FullscreenPlayerModal(
+                            cameraName:
+                                'Channel $selectedChannel - ${device.name}',
+                            rtspUrl: device.getRtspUrl(
+                              selectedChannel,
+                              isSubStream: false,
+                            ),
+                          ),
+                        ),
+                      );
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: SuperLiveTheme.cardBorder),
+
+          // Bottom Section: Grid Switcher Toolbar & PTZ Directional Joystick
+          Expanded(
+            flex: 2,
+            child: Container(
+              color: SuperLiveTheme.surface,
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  // Grid Layout Mode Switcher (1x1, 2x2, 3x3)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _buildGridModeButton('1x1', 1),
+                      const SizedBox(width: 12),
+                      _buildGridModeButton('2x2', 4),
+                      const SizedBox(width: 12),
+                      _buildGridModeButton('3x3', 9),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+
+                  // PTZ Directional Controller
+                  Expanded(
+                    child: Center(
+                      child: Container(
+                        width: 130,
+                        height: 130,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: SuperLiveTheme.background,
+                          border: Border.all(color: SuperLiveTheme.cardBorder),
+                        ),
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            Positioned(
+                              top: 4,
+                              child: IconButton(
+                                icon: const Icon(
+                                  Icons.arrow_drop_up_rounded,
+                                  size: 32,
+                                  color: SuperLiveTheme.cyanAccent,
+                                ),
+                                onPressed: () {},
+                              ),
+                            ),
+                            Positioned(
+                              bottom: 4,
+                              child: IconButton(
+                                icon: const Icon(
+                                  Icons.arrow_drop_down_rounded,
+                                  size: 32,
+                                  color: SuperLiveTheme.cyanAccent,
+                                ),
+                                onPressed: () {},
+                              ),
+                            ),
+                            Positioned(
+                              left: 4,
+                              child: IconButton(
+                                icon: const Icon(
+                                  Icons.arrow_left_rounded,
+                                  size: 32,
+                                  color: SuperLiveTheme.cyanAccent,
+                                ),
+                                onPressed: () {},
+                              ),
+                            ),
+                            Positioned(
+                              right: 4,
+                              child: IconButton(
+                                icon: const Icon(
+                                  Icons.arrow_right_rounded,
+                                  size: 32,
+                                  color: SuperLiveTheme.cyanAccent,
+                                ),
+                                onPressed: () {},
+                              ),
+                            ),
+                            const CircleAvatar(
+                              radius: 16,
+                              backgroundColor: SuperLiveTheme.surface,
+                              child: Icon(
+                                Icons.open_with_rounded,
+                                size: 16,
+                                color: SuperLiveTheme.cyanAccent,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGridModeButton(String label, int mode) {
+    final bool isSelected = gridLayout == mode;
+    return InkWell(
+      onTap: () => setState(() => gridLayout = mode),
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? SuperLiveTheme.cyanAccent.withValues(alpha: 0.15)
+              : SuperLiveTheme.background,
+          border: Border.all(
+            color: isSelected
+                ? SuperLiveTheme.cyanAccent
+                : SuperLiveTheme.cardBorder,
+          ),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            color: isSelected
+                ? SuperLiveTheme.cyanAccent
+                : SuperLiveTheme.textSecondary,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGridPlayerView(NvrDevice device) {
+    if (gridLayout == 1) {
+      return LiveStreamTile(
+        channelName: 'Channel $selectedChannel',
+        rtspUrl: device.getRtspUrl(selectedChannel, isSubStream: false),
+      );
+    }
+
+    final int crossCount = gridLayout == 4 ? 2 : 3;
+    return GridView.builder(
+      padding: const EdgeInsets.all(2),
+      itemCount: gridLayout,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: crossCount,
+        childAspectRatio: 16 / 9,
+        crossAxisSpacing: 2,
+        mainAxisSpacing: 2,
+      ),
+      itemBuilder: (context, index) {
+        final chNum = (index % device.channelCount) + 1;
+        return LiveStreamTile(
+          channelName: 'CH $chNum',
+          rtspUrl: device.getRtspUrl(chNum, isSubStream: true),
+        );
+      },
+    );
+  }
+}
+
+// Single Live Stream Player Tile Component
+class LiveStreamTile extends StatefulWidget {
+  final String channelName;
+  final String rtspUrl;
+
+  const LiveStreamTile({
+    super.key,
+    required this.channelName,
+    required this.rtspUrl,
+  });
+
+  @override
+  State<LiveStreamTile> createState() => _LiveStreamTileState();
+}
+
+class _LiveStreamTileState extends State<LiveStreamTile> {
+  late VlcPlayerController _vlcController;
+
+  @override
+  void initState() {
+    super.initState();
+    _vlcController = VlcPlayerController.network(
+      widget.rtspUrl,
+      hwAcc: HwAcc.full,
+      autoPlay: true,
+      options: VlcPlayerOptions(
+        advanced: VlcAdvancedOptions(['--rtsp-tcp', '--network-caching=300']),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _vlcController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        VlcPlayer(
+          controller: _vlcController,
+          aspectRatio: 16 / 9,
+          placeholder: const Center(
+            child: CircularProgressIndicator(
+              color: SuperLiveTheme.cyanAccent,
+              strokeWidth: 2,
+            ),
+          ),
+        ),
+        Positioned(
+          top: 6,
+          left: 6,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: Colors.black54,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              widget.channelName,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// Fullscreen HD Player Modal
+class FullscreenPlayerModal extends StatefulWidget {
+  final String cameraName;
+  final String rtspUrl;
+
+  const FullscreenPlayerModal({
+    super.key,
+    required this.cameraName,
+    required this.rtspUrl,
+  });
+
+  @override
+  State<FullscreenPlayerModal> createState() => _FullscreenPlayerModalState();
+}
+
+class _FullscreenPlayerModalState extends State<FullscreenPlayerModal> {
+  late VlcPlayerController _vlcController;
+
+  @override
+  void initState() {
+    super.initState();
+    _vlcController = VlcPlayerController.network(
+      widget.rtspUrl,
+      hwAcc: HwAcc.full,
+      autoPlay: true,
+      options: VlcPlayerOptions(
+        advanced: VlcAdvancedOptions(['--rtsp-tcp', '--network-caching=300']),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _vlcController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: Text(
+          widget.cameraName,
+          style: const TextStyle(color: Colors.white),
+        ),
+        backgroundColor: Colors.black,
+        iconTheme: const IconThemeData(color: Colors.white),
+      ),
+      body: Center(
+        child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: VlcPlayer(
+            controller: _vlcController,
+            aspectRatio: 16 / 9,
+            placeholder: const Center(
+              child: CircularProgressIndicator(
+                color: SuperLiveTheme.cyanAccent,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// TAB 2: GATES & AUTOMATION RULES TAB (Firebase Triggers + Rules Engine)
+// =============================================================================
+class GatesAutomationTab extends StatefulWidget {
+  final String esp32Ip;
+  const GatesAutomationTab({super.key, required this.esp32Ip});
+
+  @override
+  State<GatesAutomationTab> createState() => _GatesAutomationTabState();
+}
+
+class _GatesAutomationTabState extends State<GatesAutomationTab> {
+  bool isGate1Open = false;
+  bool isGate2Open = false;
+  bool isGate1Loading = false;
+  bool isGate2Loading = false;
+  bool isConnected = false;
+
+  // Automation Rules State
+  int autoCloseTimerSeconds = 30; // 0 = Disabled, 10s, 30s, 60s
+  bool isBeamSensorEnabled = true;
+  bool isScheduleEnabled = true;
+
+  @override
+  void initState() {
+    super.initState();
+    checkConnection();
+  }
+
+  Future<void> checkConnection() async {
+    try {
+      final response = await http
+          .get(Uri.parse('http://${widget.esp32Ip}/'))
+          .timeout(const Duration(seconds: 2));
+      if (mounted) setState(() => isConnected = response.statusCode == 200);
+    } catch (_) {
+      if (mounted) setState(() => isConnected = false);
+    }
+  }
+
+  Future<void> _triggerGate({
+    required String firebasePath,
+    required String localEndpoint,
+    required bool isLoading,
+    required void Function(bool openState, bool loadingState) updateState,
+  }) async {
+    if (isLoading) return;
+
+    setState(() => updateState(true, true));
+    final stopwatch = Stopwatch()..start();
+
+    try {
+      if (Firebase.apps.isNotEmpty) {
+        try {
+          final ref = FirebaseDatabase.instance.ref(firebasePath);
+          await ref.set(1);
+        } catch (e) {
+          debugPrint('Firebase write error: $e');
+        }
+      }
+      await sendEspCommand(localEndpoint);
+    } finally {
+      final elapsedMs = stopwatch.elapsedMilliseconds;
+      const targetPulseMs = 500;
+      final remainingMs = targetPulseMs - elapsedMs;
+
+      if (remainingMs > 0) {
+        await Future.delayed(Duration(milliseconds: remainingMs));
+      }
+      if (mounted) setState(() => updateState(false, false));
+
+      // Handle Auto-Close Timer Rule if Enabled
+      if (autoCloseTimerSeconds > 0) {
+        _scheduleAutoClose(firebasePath, localEndpoint);
+      }
+    }
+  }
+
+  void _scheduleAutoClose(String firebasePath, String localEndpoint) {
+    Timer(Duration(seconds: autoCloseTimerSeconds), () async {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Auto-Close Rule Triggered after ${autoCloseTimerSeconds}s ⏱️',
+          ),
+          backgroundColor: SuperLiveTheme.cyanAccent,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      if (Firebase.apps.isNotEmpty) {
+        try {
+          await FirebaseDatabase.instance.ref(firebasePath).set(1);
+        } catch (_) {}
+      }
+    });
+  }
+
+  Future<void> sendEspCommand(String endpoint) async {
+    try {
+      final response = await http.get(
+        Uri.parse('http://${widget.esp32Ip}/$endpoint'),
+      );
+      if (mounted) {
+        setState(() => isConnected = true);
+        _showSnackBar(
+          'Command Executed: ${response.body}',
+          SuperLiveTheme.greenOnline,
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => isConnected = false);
+        final bool fbActive = Firebase.apps.isNotEmpty;
+        _showSnackBar(
+          fbActive
+              ? 'Signal sent to Firebase Cloud 🚀 (/gate_status = 1)'
+              : 'Direct IP unreachable',
+          fbActive ? SuperLiveTheme.cyanAccent : SuperLiveTheme.redAlert,
+        );
+      }
+    }
+  }
+
+  void _showSnackBar(String text, Color color) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(text),
+        backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: SuperLiveTheme.background,
+      appBar: AppBar(title: const Text('Gates & Automation Rules')),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Status Header
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: SuperLiveTheme.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: SuperLiveTheme.cardBorder),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isConnected
+                          ? SuperLiveTheme.greenOnline
+                          : SuperLiveTheme.cyanAccent,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      isConnected
+                          ? 'Direct Connected (${widget.esp32Ip})'
+                          : 'Firebase Cloud Online ⚡',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: SuperLiveTheme.textPrimary,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(
+                      Icons.refresh_rounded,
+                      size: 20,
+                      color: SuperLiveTheme.cyanAccent,
+                    ),
+                    onPressed: checkConnection,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // SECTION 1: MANUAL GATE TRIGGERS
+            const Text(
+              'Manual Gate Triggers',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: SuperLiveTheme.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            _buildGateCard(
+              title: 'Main Entrance Gate',
+              subtitle: 'Firebase Path: /gate_status',
+              icon: Icons.sensor_door_outlined,
+              isOpen: isGate1Open,
+              onPressed: isGate1Loading
+                  ? null
+                  : () => _triggerGate(
+                      firebasePath: 'gate_status',
+                      localEndpoint: 'gate1/open',
+                      isLoading: isGate1Loading,
+                      updateState: (open, loading) {
+                        isGate1Open = open;
+                        isGate1Loading = loading;
+                      },
+                    ),
+            ),
+            const SizedBox(height: 16),
+
+            _buildGateCard(
+              title: 'Garage Entrance Gate',
+              subtitle: 'Firebase Path: /gate2_status',
+              icon: Icons.garage_outlined,
+              isOpen: isGate2Open,
+              onPressed: isGate2Loading
+                  ? null
+                  : () => _triggerGate(
+                      firebasePath: 'gate2_status',
+                      localEndpoint: 'gate2/open',
+                      isLoading: isGate2Loading,
+                      updateState: (open, loading) {
+                        isGate2Open = open;
+                        isGate2Loading = loading;
+                      },
+                    ),
+            ),
+            const SizedBox(height: 28),
+
+            // SECTION 2: AUTOMATION & RULES ENGINE CARD
+            const Text(
+              'Automation Rules & Safety Logic',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: SuperLiveTheme.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: SuperLiveTheme.surface,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: SuperLiveTheme.cardBorder),
+              ),
+              child: Column(
+                children: [
+                  // Auto-Close Timer Selector
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Row(
+                        children: [
+                          Icon(
+                            Icons.timer_outlined,
+                            color: SuperLiveTheme.cyanAccent,
+                            size: 20,
+                          ),
+                          SizedBox(width: 10),
+                          Text(
+                            'Auto-Close Timer Rule',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                              color: SuperLiveTheme.textPrimary,
+                            ),
+                          ),
+                        ],
+                      ),
+                      DropdownButton<int>(
+                        value: autoCloseTimerSeconds,
+                        dropdownColor: SuperLiveTheme.surface,
+                        items: const [
+                          DropdownMenuItem(value: 0, child: Text('Disabled')),
+                          DropdownMenuItem(
+                            value: 10,
+                            child: Text('10 Seconds'),
+                          ),
+                          DropdownMenuItem(
+                            value: 30,
+                            child: Text('30 Seconds'),
+                          ),
+                          DropdownMenuItem(
+                            value: 60,
+                            child: Text('60 Seconds'),
+                          ),
+                        ],
+                        onChanged: (val) {
+                          if (val != null)
+                            setState(() => autoCloseTimerSeconds = val);
+                        },
+                      ),
+                    ],
+                  ),
+                  const Divider(color: SuperLiveTheme.cardBorder, height: 24),
+
+                  // Scheduled Schedule Rule
+                  SwitchListTile(
+                    activeColor: SuperLiveTheme.cyanAccent,
+                    title: const Text(
+                      'Daily Schedule Automation',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    subtitle: const Text(
+                      'Auto-Open at 07:00 AM • Auto-Close at 10:00 PM',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: SuperLiveTheme.textSecondary,
+                      ),
+                    ),
+                    value: isScheduleEnabled,
+                    onChanged: (val) => setState(() => isScheduleEnabled = val),
+                  ),
+                  const Divider(color: SuperLiveTheme.cardBorder, height: 24),
+
+                  // Infrared Safety Beam Sensor Logic
+                  SwitchListTile(
+                    activeColor: SuperLiveTheme.cyanAccent,
+                    title: const Text(
+                      'Infrared Safety Beam Protection',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    subtitle: const Text(
+                      'Prevent gate closing if obstruction is detected by beam sensor',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: SuperLiveTheme.textSecondary,
+                      ),
+                    ),
+                    value: isBeamSensorEnabled,
+                    onChanged: (val) =>
+                        setState(() => isBeamSensorEnabled = val),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGateCard({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required bool isOpen,
+    required VoidCallback? onPressed,
+  }) {
+    final statusColor = isOpen
+        ? SuperLiveTheme.greenOnline
+        : SuperLiveTheme.redAlert;
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: SuperLiveTheme.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isOpen
+              ? SuperLiveTheme.greenOnline
+              : SuperLiveTheme.cardBorder,
+          width: isOpen ? 2 : 1,
+        ),
+      ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 400),
-                transitionBuilder: (child, anim) => ScaleTransition(
-                  scale: anim,
-                  child: RotationTransition(turns: anim, child: child),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: isOpen
+                      ? SuperLiveTheme.greenOnline.withValues(alpha: 0.1)
+                      : SuperLiveTheme.cyanAccent.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(14),
                 ),
-                child: Container(
-                  key: ValueKey(isOpen),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: accent.withOpacity(0.15),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    isOpen ? Icons.lock_open_rounded : icon,
-                    color: accent,
-                    size: 28,
-                  ),
+                child: Icon(
+                  icon,
+                  size: 32,
+                  color: isOpen
+                      ? SuperLiveTheme.greenOnline
+                      : SuperLiveTheme.cyanAccent,
                 ),
               ),
               const SizedBox(width: 14),
@@ -1396,35 +1304,39 @@ class _GateCard extends StatelessWidget {
                   children: [
                     Text(
                       title,
-                      style: TextStyle(
-                        fontSize: 17,
+                      style: const TextStyle(
+                        fontSize: 16,
                         fontWeight: FontWeight.bold,
-                        color: dark ? Colors.white : const Color(0xFF1E293B),
+                        color: SuperLiveTheme.textPrimary,
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: isOpen ? AppColors.green : Colors.grey,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          isOpen ? 'Open' : 'Closed',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: dark ? Colors.white70 : Colors.black54,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: SuperLiveTheme.textSecondary,
+                      ),
                     ),
                   ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  isOpen ? 'Opening...' : 'Closed',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: statusColor,
+                  ),
                 ),
               ),
             ],
@@ -1432,43 +1344,28 @@ class _GateCard extends StatelessWidget {
           const SizedBox(height: 18),
           SizedBox(
             width: double.infinity,
-            height: 50,
+            height: 46,
             child: ElevatedButton(
               style: ElevatedButton.styleFrom(
-                backgroundColor: isLoading ? accent.withOpacity(0.6) : accent,
-                foregroundColor: Colors.white,
+                backgroundColor: isOpen
+                    ? SuperLiveTheme.greenOnline
+                    : SuperLiveTheme.cyanAccent,
+                foregroundColor: Colors.black,
                 elevation: 0,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              onPressed: isLoading ? null : onPressed,
-              child: isLoading
-                  ? const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        ),
-                        SizedBox(width: 10),
-                        Text(
-                          'Opening...',
-                          style: TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ],
-                    )
-                  : const Text(
-                      'OPEN GATE',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
+              onPressed: onPressed,
+              child: Text(
+                isOpen
+                    ? 'Pulse Triggered (500ms)'
+                    : 'TRIGGER GATE (500ms Pulse)',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
           ),
         ],
@@ -1477,74 +1374,364 @@ class _GateCard extends StatelessWidget {
   }
 }
 
-// بانر نجاح متحرك بديل عن الـ SnackBar التقليدي
-class _SuccessBanner extends StatefulWidget {
-  final String message;
-  final VoidCallback onDone;
-  const _SuccessBanner({required this.message, required this.onDone});
+// =============================================================================
+// TAB 3: DEVICE LIST & NVR ADD TAB (SUPERLIVE DEVICE LIST & CONFIGURATION)
+// =============================================================================
+class DeviceListTab extends StatelessWidget {
+  final List<NvrDevice> devices;
+  final ValueChanged<NvrDevice> onDeviceAdded;
 
-  @override
-  State<_SuccessBanner> createState() => _SuccessBannerState();
-}
+  const DeviceListTab({
+    super.key,
+    required this.devices,
+    required this.onDeviceAdded,
+  });
 
-class _SuccessBannerState extends State<_SuccessBanner> {
-  bool _visible = false;
+  void _showAddDeviceModal(BuildContext context) {
+    final nameCtrl = TextEditingController();
+    final ipCtrl = TextEditingController();
+    final portCtrl = TextEditingController(text: '554');
+    final userCtrl = TextEditingController(text: 'admin');
+    final passCtrl = TextEditingController();
+    int selectedChannels = 4;
 
-  @override
-  void initState() {
-    super.initState();
-    Future.microtask(() {
-      if (mounted) setState(() => _visible = true);
-    });
-    Timer(const Duration(milliseconds: 2200), () async {
-      if (!mounted) return;
-      setState(() => _visible = false);
-      await Future.delayed(const Duration(milliseconds: 300));
-      widget.onDone();
-    });
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: SuperLiveTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return Padding(
+          padding: EdgeInsets.only(
+            top: 24,
+            left: 24,
+            right: 24,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Add DVR / NVR Device',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: SuperLiveTheme.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              TextField(
+                controller: nameCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Device Name (e.g. Backyard NVR)',
+                  prefixIcon: Icon(Icons.badge_outlined),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: ipCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'IP Address / Domain',
+                  hintText: '192.168.1.100',
+                  prefixIcon: Icon(Icons.dns_outlined),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: portCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'RTSP Port',
+                  hintText: '554',
+                  prefixIcon: Icon(Icons.numbers),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: userCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Username',
+                  prefixIcon: Icon(Icons.person_outline),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: passCtrl,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Password',
+                  prefixIcon: Icon(Icons.lock_outline),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              StatefulBuilder(
+                builder: (context, setModalState) {
+                  return Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Camera Channels:',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      DropdownButton<int>(
+                        value: selectedChannels,
+                        dropdownColor: SuperLiveTheme.surface,
+                        items: [2, 4, 6, 8]
+                            .map(
+                              (c) => DropdownMenuItem(
+                                value: c,
+                                child: Text('$c Channels'),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (val) {
+                          if (val != null)
+                            setModalState(() => selectedChannels = val);
+                        },
+                      ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 20),
+
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: SuperLiveTheme.cyanAccent,
+                    foregroundColor: Colors.black,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  onPressed: () {
+                    if (ipCtrl.text.isNotEmpty) {
+                      final newDev = NvrDevice(
+                        id: DateTime.now().millisecondsSinceEpoch.toString(),
+                        name: nameCtrl.text.isNotEmpty
+                            ? nameCtrl.text
+                            : 'Home NVR',
+                        ip: ipCtrl.text.trim(),
+                        port: int.tryParse(portCtrl.text.trim()) ?? 554,
+                        username: userCtrl.text.trim(),
+                        password: passCtrl.text.trim(),
+                        channelCount: selectedChannels,
+                      );
+                      onDeviceAdded(newDev);
+                      Navigator.pop(ctx);
+                    }
+                  },
+                  child: const Text(
+                    'SAVE & CONNECT DEVICE',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedSlide(
-      offset: _visible ? Offset.zero : const Offset(0, -0.6),
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeOut,
-      child: AnimatedOpacity(
-        opacity: _visible ? 1 : 0,
-        duration: const Duration(milliseconds: 300),
-        child: Material(
-          color: Colors.transparent,
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
+    return Scaffold(
+      backgroundColor: SuperLiveTheme.background,
+      appBar: AppBar(
+        title: const Text('Device List (NVR / DVR)'),
+        actions: [
+          IconButton(
+            icon: const Icon(
+              Icons.add_rounded,
+              color: SuperLiveTheme.cyanAccent,
+              size: 28,
+            ),
+            onPressed: () => _showAddDeviceModal(context),
+          ),
+        ],
+      ),
+      body: ListView.separated(
+        padding: const EdgeInsets.all(20),
+        itemCount: devices.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 14),
+        itemBuilder: (context, index) {
+          final dev = devices[index];
+          return Container(
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: AppColors.green,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: const [
-                BoxShadow(
-                  color: Colors.black26,
-                  blurRadius: 10,
-                  offset: Offset(0, 4),
-                ),
-              ],
+              color: SuperLiveTheme.surface,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: SuperLiveTheme.cardBorder),
             ),
             child: Row(
-              mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.check_circle_rounded, color: Colors.white),
-                const SizedBox(width: 10),
-                Flexible(
-                  child: Text(
-                    widget.message,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                    ),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: SuperLiveTheme.cyanAccent.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(
+                    Icons.dns_rounded,
+                    color: SuperLiveTheme.cyanAccent,
+                    size: 28,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        dev.name,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          color: SuperLiveTheme.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${dev.ip}:${dev.port} • ${dev.channelCount} Channels',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: SuperLiveTheme.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: SuperLiveTheme.greenOnline.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(
+                        Icons.circle,
+                        color: SuperLiveTheme.greenOnline,
+                        size: 8,
+                      ),
+                      SizedBox(width: 6),
+                      Text(
+                        'ONLINE',
+                        style: TextStyle(
+                          color: SuperLiveTheme.greenOnline,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
-          ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// TAB 4: SETTINGS & SYSTEM CONFIGURATION TAB
+// =============================================================================
+class SettingsTab extends StatelessWidget {
+  final String esp32Ip;
+  final ValueChanged<String> onEspIpSaved;
+
+  const SettingsTab({
+    super.key,
+    required this.esp32Ip,
+    required this.onEspIpSaved,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final espController = TextEditingController(text: esp32Ip);
+
+    return Scaffold(
+      backgroundColor: SuperLiveTheme.background,
+      appBar: AppBar(title: const Text('System Settings')),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'ESP32 Local Gateway IP',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: SuperLiveTheme.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: espController,
+              decoration: InputDecoration(
+                hintText: '192.168.1.50',
+                filled: true,
+                fillColor: SuperLiveTheme.surface,
+                prefixIcon: const Icon(
+                  Icons.router_outlined,
+                  color: SuperLiveTheme.cyanAccent,
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: const BorderSide(
+                    color: SuperLiveTheme.cyanAccent,
+                  ),
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: SuperLiveTheme.cyanAccent,
+                  foregroundColor: Colors.black,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () {
+                  onEspIpSaved(espController.text.trim());
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('ESP32 IP Updated Successfully!'),
+                      backgroundColor: SuperLiveTheme.greenOnline,
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                },
+                child: const Text(
+                  'SAVE GATEWAY IP',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

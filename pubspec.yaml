@@ -43,6 +43,7 @@ dependencies:
   # DPAPI on Windows, libsecret on Linux) used to persist the PIN,
   # device token, and ESP32 IP instead of hardcoding them in source.
   flutter_secure_storage: ^9.2.2
+  flutter_vlc_player: ^7.4.4
 
 dev_dependencies:
   flutter_test:
