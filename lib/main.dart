@@ -6,6 +6,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:flutter_vlc_player/flutter_vlc_player.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -32,11 +33,11 @@ class SuperLiveTheme {
   static const Color textSecondary = Color(0xFF9E9E9E);
 }
 
-// =============================================================================
-// DVR / NVR DEVICE MODEL
-// =============================================================================
+// ==========================================
+// DVR / NVR DEVICE MODEL (الموديل المحدث)
+// ==========================================
 class NvrDevice {
-  final String id;
+  final String id; // Serial Number
   String name;
   String ip;
   int port;
@@ -48,8 +49,8 @@ class NvrDevice {
   NvrDevice({
     required this.id,
     required this.name,
-    required this.ip,
-    this.port = 554,
+    this.ip = "192.168.1.100", // قيمة افتراضية بدون طلبها من المستخدم
+    this.port = 554, // قيمة افتراضية للبورت
     required this.username,
     required this.password,
     this.channelCount = 4,
@@ -57,11 +58,8 @@ class NvrDevice {
   });
 
   String getRtspUrl(int channelIndex, {bool isSubStream = true}) {
-    final authPart = (username.isNotEmpty && password.isNotEmpty)
-        ? '$username:$password@'
-        : '';
-    final streamType = isSubStream ? '2' : '1';
-    return 'rtsp://$authPart$ip:$port/Streaming/Channels/${channelIndex}0$streamType';
+    // رابط البث الافتراضي
+    return "rtsp://$username:$password@$ip:$port/ch${channelIndex + 1}/${isSubStream ? 'sub' : 'main'}";
   }
 }
 
@@ -122,8 +120,9 @@ class _AppLockScreenState extends State<AppLockScreen> {
     try {
       final bool canCheck = await auth.canCheckBiometrics;
       final bool isSupported = await auth.isDeviceSupported();
-      if (mounted)
+      if (mounted) {
         setState(() => isBiometricSupported = canCheck || isSupported);
+      }
       if (isBiometricSupported) _authenticateBiometrics();
     } catch (e) {
       debugPrint('Biometric check error: $e');
@@ -141,8 +140,9 @@ class _AppLockScreenState extends State<AppLockScreen> {
       );
       if (authenticated && mounted) _unlockApp();
     } on PlatformException catch (e) {
-      if (mounted)
+      if (mounted) {
         setState(() => errorMessage = 'Biometric Error: ${e.message}');
+      }
     } finally {
       if (mounted) setState(() => isAuthenticating = false);
     }
@@ -370,7 +370,7 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
   @override
   Widget build(BuildContext context) {
     final List<Widget> pages = [
-      SuperLiveViewTab(device: devices.isNotEmpty ? devices.first : null),
+      SuperLiveViewTab(devices: devices),
       GatesAutomationTab(esp32Ip: esp32Ip),
       DeviceListTab(devices: devices, onDeviceAdded: _addDevice),
       SettingsTab(
@@ -425,11 +425,18 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
 }
 
 // =============================================================================
-// TAB 1: SUPERLIVE PLUS STYLE LIVE VIEW TAB (RTSP MULTI-GRID & PTZ TOOLBAR)
+// TAB 1: SUPERLIVE PLUS STYLE LIVE VIEW TAB (RTSP MULTI-GRID)
 // =============================================================================
+// NOTE: the PTZ (Pan/Tilt/Zoom) directional arrow pad that used to sit under
+// the grid-mode switcher has been removed. That control only makes sense for
+// motorized cameras that can physically move — it sends direction commands
+// over ONVIF/CGI to rotate the camera. Since these are fixed cameras, the
+// pad had no wiring behind it and no effect, so it's gone rather than kept
+// as dead UI. If a PTZ camera is ever added, this is the natural place to
+// bring a control like it back, wired to that specific camera's API.
 class SuperLiveViewTab extends StatefulWidget {
-  final NvrDevice? device;
-  const SuperLiveViewTab({super.key, required this.device});
+  final List<NvrDevice> devices;
+  const SuperLiveViewTab({super.key, required this.devices});
 
   @override
   State<SuperLiveViewTab> createState() => _SuperLiveViewTabState();
@@ -438,6 +445,7 @@ class SuperLiveViewTab extends StatefulWidget {
 class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
   int gridLayout = 1; // 1 = 1x1, 4 = 2x2, 9 = 3x3
   int selectedChannel = 1;
+  int selectedDeviceIndex = 0;
   bool isMuted = true;
   bool isRecording = false;
   bool isIntercomActive = false;
@@ -445,7 +453,11 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
 
   @override
   Widget build(BuildContext context) {
-    final device = widget.device;
+    // Keep the index valid even if the device list shrinks/changes.
+    final safeIndex = widget.devices.isEmpty
+        ? 0
+        : selectedDeviceIndex.clamp(0, widget.devices.length - 1);
+    final device = widget.devices.isNotEmpty ? widget.devices[safeIndex] : null;
 
     return Scaffold(
       backgroundColor: SuperLiveTheme.background,
@@ -456,6 +468,48 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
               : 'SuperLive CCTV Stream',
         ),
         actions: [
+          // Camera/device switcher — only shown once there's actually a
+          // choice to make, so single-NVR setups (the common case) stay
+          // uncluttered.
+          if (widget.devices.length > 1)
+            PopupMenuButton<int>(
+              icon: const Icon(
+                Icons.dns_outlined,
+                color: SuperLiveTheme.cyanAccent,
+              ),
+              tooltip: 'Switch Device',
+              color: SuperLiveTheme.surface,
+              onSelected: (index) => setState(() {
+                selectedDeviceIndex = index;
+                selectedChannel = 1;
+              }),
+              itemBuilder: (context) => [
+                for (int i = 0; i < widget.devices.length; i++)
+                  PopupMenuItem(
+                    value: i,
+                    child: Row(
+                      children: [
+                        Icon(
+                          i == safeIndex
+                              ? Icons.radio_button_checked
+                              : Icons.radio_button_off,
+                          size: 18,
+                          color: i == safeIndex
+                              ? SuperLiveTheme.cyanAccent
+                              : SuperLiveTheme.textSecondary,
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          widget.devices[i].name,
+                          style: const TextStyle(
+                            color: SuperLiveTheme.textPrimary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
           IconButton(
             icon: const Icon(Icons.flip_to_front_rounded),
             tooltip: 'Aspect Ratio',
@@ -526,10 +580,13 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
                   ),
                   tooltip: 'Snapshot',
                   onPressed: () {
+                    // Not wired to real capture yet — see note below the
+                    // build method. Telling the user it saved when nothing
+                    // was written to disk would be actively misleading.
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
-                        content: Text('Snapshot saved to gallery 📸'),
-                        backgroundColor: SuperLiveTheme.cyanAccent,
+                        content: Text('Snapshot capture — coming soon'),
+                        backgroundColor: SuperLiveTheme.surface,
                         behavior: SnackBarBehavior.floating,
                       ),
                     );
@@ -544,17 +601,12 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
                   ),
                   tooltip: 'Record Feed',
                   onPressed: () {
-                    setState(() => isRecording = !isRecording);
+                    // Not wired to real recording yet — same reasoning as
+                    // the snapshot button above.
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          isRecording
-                              ? 'Recording started 🔴'
-                              : 'Recording saved',
-                        ),
-                        backgroundColor: isRecording
-                            ? SuperLiveTheme.redAlert
-                            : SuperLiveTheme.cyanAccent,
+                      const SnackBar(
+                        content: Text('Recording — coming soon'),
+                        backgroundColor: SuperLiveTheme.surface,
                         behavior: SnackBarBehavior.floating,
                       ),
                     );
@@ -589,101 +641,20 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
           ),
           const Divider(height: 1, color: SuperLiveTheme.cardBorder),
 
-          // Bottom Section: Grid Switcher Toolbar & PTZ Directional Joystick
-          Expanded(
-            flex: 2,
-            child: Container(
-              color: SuperLiveTheme.surface,
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  // Grid Layout Mode Switcher (1x1, 2x2, 3x3)
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      _buildGridModeButton('1x1', 1),
-                      const SizedBox(width: 12),
-                      _buildGridModeButton('2x2', 4),
-                      const SizedBox(width: 12),
-                      _buildGridModeButton('3x3', 9),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-
-                  // PTZ Directional Controller
-                  Expanded(
-                    child: Center(
-                      child: Container(
-                        width: 130,
-                        height: 130,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: SuperLiveTheme.background,
-                          border: Border.all(color: SuperLiveTheme.cardBorder),
-                        ),
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            Positioned(
-                              top: 4,
-                              child: IconButton(
-                                icon: const Icon(
-                                  Icons.arrow_drop_up_rounded,
-                                  size: 32,
-                                  color: SuperLiveTheme.cyanAccent,
-                                ),
-                                onPressed: () {},
-                              ),
-                            ),
-                            Positioned(
-                              bottom: 4,
-                              child: IconButton(
-                                icon: const Icon(
-                                  Icons.arrow_drop_down_rounded,
-                                  size: 32,
-                                  color: SuperLiveTheme.cyanAccent,
-                                ),
-                                onPressed: () {},
-                              ),
-                            ),
-                            Positioned(
-                              left: 4,
-                              child: IconButton(
-                                icon: const Icon(
-                                  Icons.arrow_left_rounded,
-                                  size: 32,
-                                  color: SuperLiveTheme.cyanAccent,
-                                ),
-                                onPressed: () {},
-                              ),
-                            ),
-                            Positioned(
-                              right: 4,
-                              child: IconButton(
-                                icon: const Icon(
-                                  Icons.arrow_right_rounded,
-                                  size: 32,
-                                  color: SuperLiveTheme.cyanAccent,
-                                ),
-                                onPressed: () {},
-                              ),
-                            ),
-                            const CircleAvatar(
-                              radius: 16,
-                              backgroundColor: SuperLiveTheme.surface,
-                              child: Icon(
-                                Icons.open_with_rounded,
-                                size: 16,
-                                color: SuperLiveTheme.cyanAccent,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+          // Bottom Section: Grid Switcher Toolbar
+          // (PTZ directional pad removed — see class-level note above)
+          Container(
+            color: SuperLiveTheme.surface,
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _buildGridModeButton('1x1', 1),
+                const SizedBox(width: 12),
+                _buildGridModeButton('2x2', 4),
+                const SizedBox(width: 12),
+                _buildGridModeButton('3x3', 9),
+              ],
             ),
           ),
         ],
@@ -727,6 +698,7 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
       return LiveStreamTile(
         channelName: 'Channel $selectedChannel',
         rtspUrl: device.getRtspUrl(selectedChannel, isSubStream: false),
+        isMuted: isMuted,
       );
     }
 
@@ -745,6 +717,23 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
         return LiveStreamTile(
           channelName: 'CH $chNum',
           rtspUrl: device.getRtspUrl(chNum, isSubStream: true),
+          isMuted: isMuted,
+          // Tapping a tile in the grid jumps straight into a full HD
+          // view of that specific channel — previously grid tiles were
+          // dead taps and the fullscreen button was permanently stuck
+          // showing Channel 1 no matter which tile you were looking at.
+          onTap: () {
+            setState(() => selectedChannel = chNum);
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => FullscreenPlayerModal(
+                  cameraName: 'CH $chNum - ${device.name}',
+                  rtspUrl: device.getRtspUrl(chNum, isSubStream: false),
+                ),
+              ),
+            );
+          },
         );
       },
     );
@@ -755,11 +744,15 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
 class LiveStreamTile extends StatefulWidget {
   final String channelName;
   final String rtspUrl;
+  final bool isMuted;
+  final VoidCallback? onTap;
 
   const LiveStreamTile({
     super.key,
     required this.channelName,
     required this.rtspUrl,
+    this.isMuted = true,
+    this.onTap,
   });
 
   @override
@@ -779,7 +772,22 @@ class _LiveStreamTileState extends State<LiveStreamTile> {
       options: VlcPlayerOptions(
         advanced: VlcAdvancedOptions(['--rtsp-tcp', '--network-caching=300']),
       ),
+      // ignore: deprecated_member_use
+      onInit: () {
+        // Apply the current mute state as soon as the stream is ready —
+        // without this the mute toggle in the control bar changed the
+        // icon but never touched actual playback audio.
+        _vlcController.setVolume(widget.isMuted ? 0 : 100);
+      },
     );
+  }
+
+  @override
+  void didUpdateWidget(covariant LiveStreamTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isMuted != widget.isMuted) {
+      _vlcController.setVolume(widget.isMuted ? 0 : 100);
+    }
   }
 
   @override
@@ -790,38 +798,53 @@ class _LiveStreamTileState extends State<LiveStreamTile> {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        VlcPlayer(
-          controller: _vlcController,
-          aspectRatio: 16 / 9,
-          placeholder: const Center(
-            child: CircularProgressIndicator(
-              color: SuperLiveTheme.cyanAccent,
-              strokeWidth: 2,
-            ),
-          ),
-        ),
-        Positioned(
-          top: 6,
-          left: 6,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: Colors.black54,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              widget.channelName,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
+    return GestureDetector(
+      onTap: widget.onTap,
+      child: Stack(
+        children: [
+          VlcPlayer(
+            controller: _vlcController,
+            aspectRatio: 16 / 9,
+            placeholder: const Center(
+              child: CircularProgressIndicator(
+                color: SuperLiveTheme.cyanAccent,
+                strokeWidth: 2,
               ),
             ),
           ),
-        ),
-      ],
+          Positioned(
+            top: 6,
+            left: 6,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                widget.channelName,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+          // Small tappable hint on grid tiles so it's clear they open a
+          // full view, not just decoration.
+          if (widget.onTap != null)
+            const Positioned(
+              bottom: 6,
+              right: 6,
+              child: Icon(
+                Icons.open_in_full_rounded,
+                size: 14,
+                color: Colors.white70,
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -894,7 +917,7 @@ class _FullscreenPlayerModalState extends State<FullscreenPlayerModal> {
 }
 
 // =============================================================================
-// TAB 2: GATES & AUTOMATION RULES TAB (Firebase Triggers + Rules Engine)
+// TAB 2: GATES TAB (Firebase + ESP32 Manual Triggers)
 // =============================================================================
 class GatesAutomationTab extends StatefulWidget {
   final String esp32Ip;
@@ -910,11 +933,6 @@ class _GatesAutomationTabState extends State<GatesAutomationTab> {
   bool isGate1Loading = false;
   bool isGate2Loading = false;
   bool isConnected = false;
-
-  // Automation Rules State
-  int autoCloseTimerSeconds = 30; // 0 = Disabled, 10s, 30s, 60s
-  bool isBeamSensorEnabled = true;
-  bool isScheduleEnabled = true;
 
   @override
   void initState() {
@@ -963,32 +981,7 @@ class _GatesAutomationTabState extends State<GatesAutomationTab> {
         await Future.delayed(Duration(milliseconds: remainingMs));
       }
       if (mounted) setState(() => updateState(false, false));
-
-      // Handle Auto-Close Timer Rule if Enabled
-      if (autoCloseTimerSeconds > 0) {
-        _scheduleAutoClose(firebasePath, localEndpoint);
-      }
     }
-  }
-
-  void _scheduleAutoClose(String firebasePath, String localEndpoint) {
-    Timer(Duration(seconds: autoCloseTimerSeconds), () async {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Auto-Close Rule Triggered after ${autoCloseTimerSeconds}s ⏱️',
-          ),
-          backgroundColor: SuperLiveTheme.cyanAccent,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-      if (Firebase.apps.isNotEmpty) {
-        try {
-          await FirebaseDatabase.instance.ref(firebasePath).set(1);
-        } catch (_) {}
-      }
-    });
   }
 
   Future<void> sendEspCommand(String endpoint) async {
@@ -1028,276 +1021,479 @@ class _GatesAutomationTabState extends State<GatesAutomationTab> {
     );
   }
 
+  // 1. تعريف المتغيرات (Controllers)
+  final TextEditingController _serialNumberController = TextEditingController();
+  final TextEditingController _deviceNameController = TextEditingController();
+  final TextEditingController _usernameController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  List<NvrDevice> myDevices = [];
+
+  // 2. تعريف دالة فتح الباركود
+  void _openBarcodeScanner() async {
+    final scannedCode = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) =>
+            const QRScannerView(), // تأكد إن كلاس الـ QRScannerView موجود تحت في الملف
+      ),
+    );
+
+    if (scannedCode != null) {
+      setState(() {
+        _serialNumberController.text = scannedCode;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: SuperLiveTheme.background,
-      appBar: AppBar(title: const Text('Gates & Automation Rules')),
+      appBar: AppBar(title: const Text('Gate Control'), centerTitle: false),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Status Header
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: SuperLiveTheme.surface,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: SuperLiveTheme.cardBorder),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 10,
-                    height: 10,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: isConnected
-                          ? SuperLiveTheme.greenOnline
-                          : SuperLiveTheme.cyanAccent,
-                    ),
+        child: SingleChildScrollView(
+          // <-- ضيف دي هنا عشان الصفحة ترتفع وتنزيل مع الكيبورد
+          padding: EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 1. Serial Number Field with Barcode Scan Icon
+              TextField(
+                controller: _serialNumberController,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'Serial Number',
+                  labelStyle: const TextStyle(color: Colors.grey),
+                  prefixIcon: const Icon(
+                    Icons.qr_code,
+                    color: Colors.blueAccent,
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      isConnected
-                          ? 'Direct Connected (${widget.esp32Ip})'
-                          : 'Firebase Cloud Online ⚡',
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                        color: SuperLiveTheme.textPrimary,
+                  suffixIcon: IconButton(
+                    icon: const Icon(
+                      Icons.camera_alt,
+                      color: Colors.blueAccent,
+                    ),
+                    onPressed: _openBarcodeScanner,
+                  ),
+                  filled: true,
+                  fillColor: const Color(0xFF1E1E1E),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8.0),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // 2. Device Name Field
+              TextField(
+                controller: _deviceNameController,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'Device Name (e.g., Home)',
+                  labelStyle: const TextStyle(color: Colors.grey),
+                  prefixIcon: const Icon(
+                    Icons.devices,
+                    color: Colors.blueAccent,
+                  ),
+                  filled: true,
+                  fillColor: const Color(0xFF1E1E1E),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8.0),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // 3. Username Field
+              TextField(
+                controller: _usernameController,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'Username',
+                  labelStyle: const TextStyle(color: Colors.grey),
+                  prefixIcon: const Icon(
+                    Icons.person,
+                    color: Colors.blueAccent,
+                  ),
+                  filled: true,
+                  fillColor: const Color(0xFF1E1E1E),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8.0),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // 4. Password Field
+              TextField(
+                controller: _passwordController,
+                obscureText: true,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'Password',
+                  labelStyle: const TextStyle(color: Colors.grey),
+                  prefixIcon: const Icon(Icons.lock, color: Colors.blueAccent),
+                  filled: true,
+                  fillColor: const Color(0xFF1E1E1E),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8.0),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // 5. Save Button (زرار الحفظ المحدث)
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8.0),
+                  ),
+                ),
+                onPressed: () {
+                  // إنشاء كائن الجهاز الجديد بالبيانات المدخلة وتجاوز الـ IP والبورت تلقائياً
+                  NvrDevice newDevice = NvrDevice(
+                    id: _serialNumberController.text,
+                    name: _deviceNameController.text,
+                    username: _usernameController.text,
+                    password: _passwordController.text,
+                  );
+
+                  setState(() {
+                    myDevices.add(newDevice);
+                  });
+
+                  Navigator.pop(context);
+                },
+                child: const Text(
+                  'Save',
+                  style: TextStyle(fontSize: 16, color: Colors.white),
+                ),
+              ),
+
+              // ---------- Connection status hero ----------
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      SuperLiveTheme.surface,
+                      SuperLiveTheme.surface.withValues(alpha: 0.6),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: SuperLiveTheme.cardBorder),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color:
+                            (isConnected
+                                    ? SuperLiveTheme.greenOnline
+                                    : SuperLiveTheme.cyanAccent)
+                                .withValues(alpha: 0.12),
+                      ),
+                      child: Icon(
+                        isConnected ? Icons.wifi_rounded : Icons.cloud_rounded,
+                        color: isConnected
+                            ? SuperLiveTheme.greenOnline
+                            : SuperLiveTheme.cyanAccent,
+                        size: 22,
                       ),
                     ),
-                  ),
-                  IconButton(
-                    icon: const Icon(
-                      Icons.refresh_rounded,
-                      size: 20,
-                      color: SuperLiveTheme.cyanAccent,
-                    ),
-                    onPressed: checkConnection,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            // SECTION 1: MANUAL GATE TRIGGERS
-            const Text(
-              'Manual Gate Triggers',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: SuperLiveTheme.textPrimary,
-              ),
-            ),
-            const SizedBox(height: 12),
-
-            _buildGateCard(
-              title: 'Main Entrance Gate',
-              subtitle: 'Firebase Path: /gate_status',
-              icon: Icons.sensor_door_outlined,
-              isOpen: isGate1Open,
-              onPressed: isGate1Loading
-                  ? null
-                  : () => _triggerGate(
-                      firebasePath: 'gate_status',
-                      localEndpoint: 'gate1/open',
-                      isLoading: isGate1Loading,
-                      updateState: (open, loading) {
-                        isGate1Open = open;
-                        isGate1Loading = loading;
-                      },
-                    ),
-            ),
-            const SizedBox(height: 16),
-
-            _buildGateCard(
-              title: 'Garage Entrance Gate',
-              subtitle: 'Firebase Path: /gate2_status',
-              icon: Icons.garage_outlined,
-              isOpen: isGate2Open,
-              onPressed: isGate2Loading
-                  ? null
-                  : () => _triggerGate(
-                      firebasePath: 'gate2_status',
-                      localEndpoint: 'gate2/open',
-                      isLoading: isGate2Loading,
-                      updateState: (open, loading) {
-                        isGate2Open = open;
-                        isGate2Loading = loading;
-                      },
-                    ),
-            ),
-            const SizedBox(height: 28),
-
-            // SECTION 2: AUTOMATION & RULES ENGINE CARD
-            const Text(
-              'Automation Rules & Safety Logic',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: SuperLiveTheme.textPrimary,
-              ),
-            ),
-            const SizedBox(height: 12),
-
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: SuperLiveTheme.surface,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: SuperLiveTheme.cardBorder),
-              ),
-              child: Column(
-                children: [
-                  // Auto-Close Timer Selector
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Row(
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(
-                            Icons.timer_outlined,
-                            color: SuperLiveTheme.cyanAccent,
-                            size: 20,
+                          Row(
+                            children: [
+                              _LiveDot(
+                                color: isConnected
+                                    ? SuperLiveTheme.greenOnline
+                                    : SuperLiveTheme.cyanAccent,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                isConnected
+                                    ? 'Direct Connection'
+                                    : 'Cloud Relay',
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                  color: SuperLiveTheme.textPrimary,
+                                ),
+                              ),
+                            ],
                           ),
-                          SizedBox(width: 10),
+                          const SizedBox(height: 2),
                           Text(
-                            'Auto-Close Timer Rule',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                              color: SuperLiveTheme.textPrimary,
+                            isConnected
+                                ? widget.esp32Ip
+                                : 'Commands are routed via Firebase',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: SuperLiveTheme.textSecondary,
                             ),
                           ),
                         ],
                       ),
-                      DropdownButton<int>(
-                        value: autoCloseTimerSeconds,
-                        dropdownColor: SuperLiveTheme.surface,
-                        items: const [
-                          DropdownMenuItem(value: 0, child: Text('Disabled')),
-                          DropdownMenuItem(
-                            value: 10,
-                            child: Text('10 Seconds'),
-                          ),
-                          DropdownMenuItem(
-                            value: 30,
-                            child: Text('30 Seconds'),
-                          ),
-                          DropdownMenuItem(
-                            value: 60,
-                            child: Text('60 Seconds'),
-                          ),
-                        ],
-                        onChanged: (val) {
-                          if (val != null)
-                            setState(() => autoCloseTimerSeconds = val);
+                    ),
+                    IconButton(
+                      icon: const Icon(
+                        Icons.refresh_rounded,
+                        color: SuperLiveTheme.cyanAccent,
+                      ),
+                      onPressed: checkConnection,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 28),
+
+              // ---------- Section heading ----------
+              const Text(
+                'Your Gates',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: SuperLiveTheme.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Tap a card to send an instant open pulse',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: SuperLiveTheme.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              _AnimatedGateCard(
+                title: 'Main Entrance Gate',
+                subtitle: '/gate_status',
+                icon: Icons.sensor_door_outlined,
+                accentColor: SuperLiveTheme.cyanAccent,
+                isOpen: isGate1Open,
+                isLoading: isGate1Loading,
+                onPressed: isGate1Loading
+                    ? null
+                    : () => _triggerGate(
+                        firebasePath: 'gate_status',
+                        localEndpoint: 'gate1/open',
+                        isLoading: isGate1Loading,
+                        updateState: (open, loading) {
+                          isGate1Open = open;
+                          isGate1Loading = loading;
                         },
                       ),
-                    ],
-                  ),
-                  const Divider(color: SuperLiveTheme.cardBorder, height: 24),
+              ),
+              const SizedBox(height: 16),
 
-                  // Scheduled Schedule Rule
-                  SwitchListTile(
-                    activeColor: SuperLiveTheme.cyanAccent,
-                    title: const Text(
-                      'Daily Schedule Automation',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
+              _AnimatedGateCard(
+                title: 'Internal Gate',
+                subtitle: '/gate2_status',
+                icon: Icons.door_sliding_outlined,
+                accentColor: SuperLiveTheme.goldAccent,
+                isOpen: isGate2Open,
+                isLoading: isGate2Loading,
+                onPressed: isGate2Loading
+                    ? null
+                    : () => _triggerGate(
+                        firebasePath: 'gate2_status',
+                        localEndpoint: 'gate2/open',
+                        isLoading: isGate2Loading,
+                        updateState: (open, loading) {
+                          isGate2Open = open;
+                          isGate2Loading = loading;
+                        },
                       ),
-                    ),
-                    subtitle: const Text(
-                      'Auto-Open at 07:00 AM • Auto-Close at 10:00 PM',
+              ),
+              const SizedBox(height: 22),
+
+              // ---------- Small footer hint ----------
+              Row(
+                children: const [
+                  Icon(
+                    Icons.info_outline_rounded,
+                    size: 14,
+                    color: SuperLiveTheme.textSecondary,
+                  ),
+                  SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Each trigger sends a 500ms pulse, matching the ESP32 relay timing.',
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: 11.5,
                         color: SuperLiveTheme.textSecondary,
                       ),
                     ),
-                    value: isScheduleEnabled,
-                    onChanged: (val) => setState(() => isScheduleEnabled = val),
-                  ),
-                  const Divider(color: SuperLiveTheme.cardBorder, height: 24),
-
-                  // Infrared Safety Beam Sensor Logic
-                  SwitchListTile(
-                    activeColor: SuperLiveTheme.cyanAccent,
-                    title: const Text(
-                      'Infrared Safety Beam Protection',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    subtitle: const Text(
-                      'Prevent gate closing if obstruction is detected by beam sensor',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: SuperLiveTheme.textSecondary,
-                      ),
-                    ),
-                    value: isBeamSensorEnabled,
-                    onChanged: (val) =>
-                        setState(() => isBeamSensorEnabled = val),
                   ),
                 ],
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
+}
 
-  Widget _buildGateCard({
-    required String title,
-    required String subtitle,
-    required IconData icon,
-    required bool isOpen,
-    required VoidCallback? onPressed,
-  }) {
+// Small pulsing status dot used in the connection hero card.
+class _LiveDot extends StatefulWidget {
+  final Color color;
+  const _LiveDot({required this.color});
+
+  @override
+  State<_LiveDot> createState() => _LiveDotState();
+}
+
+class _LiveDotState extends State<_LiveDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1000),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        final opacity = 0.5 + (_controller.value * 0.5);
+        return Opacity(
+          opacity: opacity,
+          child: Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: widget.color,
+              boxShadow: [
+                BoxShadow(
+                  color: widget.color.withValues(alpha: 0.6),
+                  blurRadius: 5,
+                  spreadRadius: 0.5,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// =============================================================================
+// Animated gate trigger card.
+// Adds tasteful motion without a layout overhaul:
+//   1. The card border/glow eases smoothly between "idle" and "open" colors
+//      instead of snapping instantly (AnimatedContainer).
+//   2. The icon does a gentle spring "swing" whenever the gate state flips
+//      (AnimatedScale + AnimatedRotation), like a door nudging open.
+//   3. A slim animated progress line appears under the button while the
+//      pulse command is in flight, so the button doesn't feel frozen.
+// Each gate also gets its own accent color so the two cards read as
+// distinct devices at a glance rather than duplicate blocks.
+// =============================================================================
+class _AnimatedGateCard extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color accentColor;
+  final bool isOpen;
+  final bool isLoading;
+  final VoidCallback? onPressed;
+
+  const _AnimatedGateCard({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.accentColor,
+    required this.isOpen,
+    required this.isLoading,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     final statusColor = isOpen
         ? SuperLiveTheme.greenOnline
         : SuperLiveTheme.redAlert;
 
-    return Container(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOut,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: SuperLiveTheme.surface,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(
           color: isOpen
               ? SuperLiveTheme.greenOnline
               : SuperLiveTheme.cardBorder,
           width: isOpen ? 2 : 1,
         ),
+        boxShadow: [
+          BoxShadow(
+            color: (isOpen ? SuperLiveTheme.greenOnline : accentColor)
+                .withValues(alpha: isOpen ? 0.18 : 0.05),
+            blurRadius: 18,
+            spreadRadius: isOpen ? 1 : 0,
+          ),
+        ],
       ),
       child: Column(
         children: [
           Row(
             children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: isOpen
-                      ? SuperLiveTheme.greenOnline.withValues(alpha: 0.1)
-                      : SuperLiveTheme.cyanAccent.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Icon(
-                  icon,
-                  size: 32,
-                  color: isOpen
-                      ? SuperLiveTheme.greenOnline
-                      : SuperLiveTheme.cyanAccent,
+              AnimatedScale(
+                scale: isLoading ? 1.12 : 1.0,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.elasticOut,
+                child: AnimatedRotation(
+                  turns: isOpen ? 0.02 : 0.0,
+                  duration: const Duration(milliseconds: 400),
+                  curve: Curves.elasticOut,
+                  child: Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [
+                          (isOpen ? SuperLiveTheme.greenOnline : accentColor)
+                              .withValues(alpha: 0.22),
+                          (isOpen ? SuperLiveTheme.greenOnline : accentColor)
+                              .withValues(alpha: 0.05),
+                        ],
+                      ),
+                    ),
+                    child: Icon(
+                      icon,
+                      size: 30,
+                      color: isOpen ? SuperLiveTheme.greenOnline : accentColor,
+                    ),
+                  ),
                 ),
               ),
-              const SizedBox(width: 14),
+              const SizedBox(width: 16),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1305,68 +1501,106 @@ class _GatesAutomationTabState extends State<GatesAutomationTab> {
                     Text(
                       title,
                       style: const TextStyle(
-                        fontSize: 16,
+                        fontSize: 17,
                         fontWeight: FontWeight.bold,
                         color: SuperLiveTheme.textPrimary,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: SuperLiveTheme.textSecondary,
-                      ),
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.bolt_rounded,
+                          size: 12,
+                          color: SuperLiveTheme.textSecondary,
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          subtitle,
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            color: SuperLiveTheme.textSecondary,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  color: statusColor.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  isOpen ? 'Opening...' : 'Closed',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: statusColor,
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 250),
+                child: Container(
+                  key: ValueKey('$isOpen-$isLoading'),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: statusColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    isOpen ? 'Opening' : 'Closed',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: statusColor,
+                    ),
                   ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 20),
           SizedBox(
             width: double.infinity,
-            height: 46,
-            child: ElevatedButton(
+            height: 48,
+            child: ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
                 backgroundColor: isOpen
                     ? SuperLiveTheme.greenOnline
-                    : SuperLiveTheme.cyanAccent,
+                    : accentColor,
                 foregroundColor: Colors.black,
                 elevation: 0,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(14),
                 ),
               ),
               onPressed: onPressed,
-              child: Text(
-                isOpen
-                    ? 'Pulse Triggered (500ms)'
-                    : 'TRIGGER GATE (500ms Pulse)',
+              icon: Icon(
+                isOpen ? Icons.check_circle_rounded : Icons.touch_app_rounded,
+                size: 18,
+              ),
+              label: Text(
+                isOpen ? 'Pulse Sent' : 'Trigger Gate',
                 style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
+                  letterSpacing: 0.3,
                 ),
               ),
             ),
+          ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            child: isLoading
+                ? Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: SizedBox(
+                        height: 3,
+                        child: LinearProgressIndicator(
+                          backgroundColor: SuperLiveTheme.cardBorder,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            accentColor,
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                : const SizedBox.shrink(),
           ),
         ],
       ),
@@ -1490,8 +1724,9 @@ class DeviceListTab extends StatelessWidget {
                             )
                             .toList(),
                         onChanged: (val) {
-                          if (val != null)
+                          if (val != null) {
                             setModalState(() => selectedChannels = val);
+                          }
                         },
                       ),
                     ],
@@ -1561,7 +1796,7 @@ class DeviceListTab extends StatelessWidget {
       body: ListView.separated(
         padding: const EdgeInsets.all(20),
         itemCount: devices.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 14),
+        separatorBuilder: (_, _) => const SizedBox(height: 14),
         itemBuilder: (context, index) {
           final dev = devices[index];
           return Container(
@@ -1733,6 +1968,33 @@ class SettingsTab extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// Separate Screen for QR/Barcode Scanning
+class QRScannerView extends StatelessWidget {
+  const QRScannerView({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Scan QR Code'),
+        backgroundColor: Colors.black,
+      ),
+      body: MobileScanner(
+        onDetect: (capture) {
+          final List<Barcode> barcodes = capture.barcodes;
+          for (final barcode in barcodes) {
+            if (barcode.rawValue != null) {
+              final String code = barcode.rawValue!;
+              Navigator.pop(context, code);
+              break;
+            }
+          }
+        },
       ),
     );
   }
