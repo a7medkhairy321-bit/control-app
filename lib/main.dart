@@ -21,31 +21,121 @@ void main() async {
 }
 
 // =============================================================================
-// SUPERLIVE COLOR PALETTES (DARK & LIGHT THEMES)
+// SUPERLIVE CALM & ELEGANT COLOR PALETTES (DARK & LIGHT GRADIENTS)
 // =============================================================================
 class SuperLiveTheme {
-  // Dark Theme
-  static const Color background = Color(0xFF121212);
-  static const Color surface = Color(0xFF1E1E1E);
-  static const Color cardBorder = Color(0xFF2E2E2E);
-  static const Color cyanAccent = Color(0xFF00E5FF);
-  static const Color goldAccent = Color(0xFFC5A059);
-  static const Color greenOnline = Color(0xFF00E676);
-  static const Color redAlert = Color(0xFFFF5252);
-  static const Color textPrimary = Color(0xFFF5F5F5);
-  static const Color textSecondary = Color(0xFF9E9E9E);
+  // Calm Dark Theme Background Gradient
+  static const BoxDecoration darkCalmGradient = BoxDecoration(
+    gradient: LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: [
+        Color(0xFF0B0F19),
+        Color(0xFF131A2B),
+        Color(0xFF1A233A),
+        Color(0xFF0F172A),
+      ],
+      stops: [0.0, 0.4, 0.8, 1.0],
+    ),
+  );
 
-  // Light Theme
+  // Calm Light Theme Background Gradient
+  static const BoxDecoration lightCalmGradient = BoxDecoration(
+    gradient: LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: [
+        Color(0xFFF8FAFC),
+        Color(0xFFF1F5F9),
+        Color(0xFFE2E8F0),
+        Color(0xFFCBD5E1),
+      ],
+      stops: [0.0, 0.4, 0.8, 1.0],
+    ),
+  );
+
+  // Dark Theme Accent Colors
+  static const Color darkBackground = Color(0xFF0B0F19);
+  static const Color darkSurface = Color(0xCC1A233A);
+  static const Color darkCardBorder = Color(0x4038BDF8);
+  static const Color darkCyanAccent = Color(0xFF38BDF8);
+  static const Color darkGoldAccent = Color(0xFFEAB308);
+  static const Color greenOnline = Color(0xFF10B981);
+  static const Color redAlert = Color(0xFFEF4444);
+  static const Color darkTextPrimary = Color(0xFFF8FAFC);
+  static const Color darkTextSecondary = Color(0xFF94A3B8);
+
+  // Light Theme Accent Colors
   static const Color lightBackground = Color(0xFFF8FAFC);
-  static const Color lightSurface = Color(0xFFFFFFFF);
-  static const Color lightCardBorder = Color(0xFFE2E8F0);
+  static const Color lightSurface = Color(0xCCFFFFFF);
+  static const Color lightCardBorder = Color(0x400284C7);
   static const Color lightCyanAccent = Color(0xFF0284C7);
   static const Color lightTextPrimary = Color(0xFF0F172A);
-  static const Color lightTextSecondary = Color(0xFF64748B);
+  static const Color lightTextSecondary = Color(0xFF475569);
 }
 
 // =============================================================================
-// DVR / NVR DEVICE MODEL (DEFAULT 16 CHANNELS FOR FULL HIGH CAPACITY)
+// REUSABLE DISTINCT HEADER BAR CONTAINER
+// =============================================================================
+PreferredSizeWidget buildCustomHeaderBar(
+  BuildContext context, {
+  required String title,
+  List<Widget>? actions,
+  Widget? titleWidget,
+}) {
+  final isDark = Theme.of(context).brightness == Brightness.dark;
+
+  return PreferredSize(
+    preferredSize: const Size.fromHeight(64),
+    child: Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xEE1E293B) : const Color(0xEEFFFFFF),
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(20)),
+        border: Border(
+          bottom: BorderSide(
+            color: isDark
+                ? SuperLiveTheme.darkCardBorder
+                : SuperLiveTheme.lightCardBorder,
+            width: 1.5,
+          ),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: isDark ? Colors.black38 : Colors.black12,
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        child: Row(
+          children: [
+            Expanded(
+              child:
+                  titleWidget ??
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: isDark
+                          ? SuperLiveTheme.darkTextPrimary
+                          : SuperLiveTheme.lightTextPrimary,
+                    ),
+                  ),
+            ),
+            ...?actions,
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+// =============================================================================
+// DVR / NVR DEVICE MODEL
 // =============================================================================
 class NvrDevice {
   final String id;
@@ -105,7 +195,7 @@ class NvrDevice {
 }
 
 // =============================================================================
-// MAIN APPLICATION ENTRY POINT WITH DYNAMIC THEME MODE SWITCHER
+// MAIN ENTRY POINT WITH PERSISTENT SECURE STORAGE THEME SWITCHER
 // =============================================================================
 class SuperLiveSmartHomeApp extends StatefulWidget {
   const SuperLiveSmartHomeApp({super.key});
@@ -118,12 +208,43 @@ class SuperLiveSmartHomeApp extends StatefulWidget {
 }
 
 class SuperLiveSmartHomeAppState extends State<SuperLiveSmartHomeApp> {
+  static const _storage = FlutterSecureStorage();
+  static const _themeStorageKey = 'app_theme_mode';
+
   ThemeMode _themeMode = ThemeMode.dark;
 
-  void toggleTheme(bool isDark) {
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedTheme();
+  }
+
+  Future<void> _loadSavedTheme() async {
+    try {
+      final savedTheme = await _storage.read(key: _themeStorageKey);
+      if (savedTheme == 'light') {
+        setState(() => _themeMode = ThemeMode.light);
+      } else if (savedTheme == 'dark') {
+        setState(() => _themeMode = ThemeMode.dark);
+      }
+    } catch (e) {
+      debugPrint('Error loading saved theme: $e');
+    }
+  }
+
+  Future<void> toggleTheme(bool isDark) async {
+    final newMode = isDark ? ThemeMode.dark : ThemeMode.light;
     setState(() {
-      _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
+      _themeMode = newMode;
     });
+    try {
+      await _storage.write(
+        key: _themeStorageKey,
+        value: isDark ? 'dark' : 'light',
+      );
+    } catch (e) {
+      debugPrint('Error saving theme choice: $e');
+    }
   }
 
   bool get isDarkMode => _themeMode == ThemeMode.dark;
@@ -135,36 +256,38 @@ class SuperLiveSmartHomeAppState extends State<SuperLiveSmartHomeApp> {
       title: 'SuperLive Smart Home',
       themeMode: _themeMode,
       theme: ThemeData.light().copyWith(
-        scaffoldBackgroundColor: SuperLiveTheme.lightBackground,
+        scaffoldBackgroundColor: Colors.transparent,
         colorScheme: const ColorScheme.light(
           primary: SuperLiveTheme.lightCyanAccent,
           surface: SuperLiveTheme.lightSurface,
         ),
         appBarTheme: const AppBarTheme(
-          backgroundColor: SuperLiveTheme.lightSurface,
+          backgroundColor: Colors.transparent,
           foregroundColor: SuperLiveTheme.lightTextPrimary,
           elevation: 0,
         ),
       ),
       darkTheme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: SuperLiveTheme.background,
+        scaffoldBackgroundColor: Colors.transparent,
         colorScheme: const ColorScheme.dark(
-          primary: SuperLiveTheme.cyanAccent,
-          surface: SuperLiveTheme.surface,
+          primary: SuperLiveTheme.darkCyanAccent,
+          surface: SuperLiveTheme.darkSurface,
         ),
         appBarTheme: const AppBarTheme(
-          backgroundColor: SuperLiveTheme.surface,
-          foregroundColor: SuperLiveTheme.textPrimary,
+          backgroundColor: Colors.transparent,
+          foregroundColor: SuperLiveTheme.darkTextPrimary,
           elevation: 0,
         ),
       ),
+      // Opens directly on the PIN lock screen — no splash screen delay
+      // before it, animated or not.
       home: const AppLockScreen(),
     );
   }
 }
 
 // =============================================================================
-// SECURITY APP LOCK SCREEN (BIOMETRIC & PASSCODE)
+// SECURITY PIN LOCK SCREEN — Simple & Clean Design
 // =============================================================================
 class AppLockScreen extends StatefulWidget {
   const AppLockScreen({super.key});
@@ -174,12 +297,11 @@ class AppLockScreen extends StatefulWidget {
 }
 
 class _AppLockScreenState extends State<AppLockScreen> {
-  final LocalAuthentication auth = LocalAuthentication();
   final TextEditingController _pinController = TextEditingController();
+  final LocalAuthentication auth = LocalAuthentication();
 
-  String savedPin = '1234';
+  static const String _savedPin = '2011';
   bool isBiometricSupported = false;
-  bool isAuthenticating = false;
   String errorMessage = '';
 
   @override
@@ -188,41 +310,37 @@ class _AppLockScreenState extends State<AppLockScreen> {
     _checkBiometrics();
   }
 
+  @override
+  void dispose() {
+    _pinController.dispose();
+    super.dispose();
+  }
+
   Future<void> _checkBiometrics() async {
     try {
       final bool canCheck = await auth.canCheckBiometrics;
       final bool isSupported = await auth.isDeviceSupported();
-      if (mounted)
+      if (mounted) {
         setState(() => isBiometricSupported = canCheck || isSupported);
+      }
       if (isBiometricSupported) _authenticateBiometrics();
-    } catch (e) {
-      debugPrint('Biometric check error: $e');
-    }
+    } catch (_) {}
   }
 
   Future<void> _authenticateBiometrics() async {
     try {
-      setState(() {
-        isAuthenticating = true;
-        errorMessage = '';
-      });
-      final bool authenticated = await auth.authenticate(
-        localizedReason: 'Authenticate to access SuperLive Smart Home',
+      final bool ok = await auth.authenticate(
+        localizedReason: 'Authenticate to access SuperLive',
       );
-      if (authenticated && mounted) _unlockApp();
-    } on PlatformException catch (e) {
-      if (mounted)
-        setState(() => errorMessage = 'Biometric Error: ${e.message}');
-    } finally {
-      if (mounted) setState(() => isAuthenticating = false);
-    }
+      if (ok && mounted) _unlockApp();
+    } on PlatformException catch (_) {}
   }
 
   void _verifyPin() {
-    if (_pinController.text == savedPin) {
+    if (_pinController.text == _savedPin) {
       _unlockApp();
     } else {
-      setState(() => errorMessage = 'Invalid Passcode!');
+      setState(() => errorMessage = 'Wrong PIN, try again');
       _pinController.clear();
     }
   }
@@ -238,162 +356,160 @@ class _AppLockScreenState extends State<AppLockScreen> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final primaryColor = isDark
-        ? SuperLiveTheme.cyanAccent
+        ? SuperLiveTheme.darkCyanAccent
         : SuperLiveTheme.lightCyanAccent;
+    final gradientDeco = isDark
+        ? SuperLiveTheme.darkCalmGradient
+        : SuperLiveTheme.lightCalmGradient;
 
-    return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(22),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).cardColor,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: primaryColor, width: 2),
-                    boxShadow: [
-                      BoxShadow(
-                        color: primaryColor.withValues(alpha: 0.2),
-                        blurRadius: 20,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  child: Icon(
-                    Icons.security_rounded,
-                    size: 64,
-                    color: primaryColor,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                const Text(
-                  'SUPERLIVE SURVEILLANCE',
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 2,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                const Text(
-                  'Enter PIN or Use Biometrics to Access Controls',
-                  style: TextStyle(fontSize: 13, color: Colors.grey),
-                ),
-                const SizedBox(height: 36),
-
-                Container(
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).cardColor,
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(
+    return Container(
+      decoration: gradientDeco,
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: SafeArea(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Lock icon
+                  Container(
+                    width: 70,
+                    height: 70,
+                    decoration: BoxDecoration(
                       color: isDark
-                          ? SuperLiveTheme.cardBorder
-                          : SuperLiveTheme.lightCardBorder,
+                          ? SuperLiveTheme.darkSurface
+                          : SuperLiveTheme.lightSurface,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: primaryColor.withValues(alpha: 0.5),
+                      ),
+                    ),
+                    child: Icon(
+                      Icons.lock_rounded,
+                      color: primaryColor,
+                      size: 32,
                     ),
                   ),
-                  child: Column(
-                    children: [
-                      if (errorMessage.isNotEmpty) ...[
-                        Text(
-                          errorMessage,
-                          style: const TextStyle(
-                            color: SuperLiveTheme.redAlert,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13,
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-                      ],
-                      TextField(
-                        controller: _pinController,
-                        keyboardType: TextInputType.number,
-                        obscureText: true,
-                        maxLength: 4,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontSize: 26,
-                          letterSpacing: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        decoration: InputDecoration(
-                          hintText: '••••',
-                          counterText: '',
-                          labelText: 'Security PIN',
-                          labelStyle: TextStyle(color: primaryColor),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(16),
-                            borderSide: BorderSide(
-                              color: primaryColor,
-                              width: 2,
-                            ),
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                        ),
-                        onChanged: (val) {
-                          if (val.length == 4) _verifyPin();
-                        },
-                      ),
-                      const SizedBox(height: 20),
-                      SizedBox(
-                        width: double.infinity,
-                        height: 50,
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: primaryColor,
-                            foregroundColor: isDark
-                                ? Colors.black
-                                : Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                          ),
-                          onPressed: _verifyPin,
-                          child: const Text(
-                            'UNLOCK APP',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ),
-                      if (isBiometricSupported) ...[
-                        const SizedBox(height: 14),
-                        OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            minimumSize: const Size(double.infinity, 50),
-                            side: BorderSide(color: primaryColor),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                          ),
-                          icon: Icon(
-                            Icons.fingerprint_rounded,
-                            color: primaryColor,
-                          ),
-                          label: Text(
-                            'BIOMETRIC UNLOCK',
-                            style: TextStyle(
-                              color: primaryColor,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          onPressed: isAuthenticating
-                              ? null
-                              : _authenticateBiometrics,
-                        ),
-                      ],
-                    ],
+                  const SizedBox(height: 20),
+                  Text(
+                    'Enter PIN',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w600,
+                      color: isDark
+                          ? SuperLiveTheme.darkTextPrimary
+                          : SuperLiveTheme.lightTextPrimary,
+                    ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 6),
+                  if (errorMessage.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        errorMessage,
+                        style: const TextStyle(
+                          color: SuperLiveTheme.redAlert,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 24),
+                  // PIN field
+                  Container(
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? SuperLiveTheme.darkSurface
+                          : SuperLiveTheme.lightSurface,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: isDark
+                            ? SuperLiveTheme.darkCardBorder
+                            : SuperLiveTheme.lightCardBorder,
+                      ),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 16,
+                    ),
+                    child: TextField(
+                      controller: _pinController,
+                      keyboardType: TextInputType.number,
+                      obscureText: true,
+                      maxLength: 4,
+                      textAlign: TextAlign.center,
+                      autofocus: true,
+                      style: TextStyle(
+                        fontSize: 30,
+                        letterSpacing: 14,
+                        fontWeight: FontWeight.bold,
+                        color: isDark
+                            ? SuperLiveTheme.darkTextPrimary
+                            : SuperLiveTheme.lightTextPrimary,
+                      ),
+                      decoration: InputDecoration(
+                        hintText: '····',
+                        hintStyle: TextStyle(
+                          color: isDark
+                              ? SuperLiveTheme.darkTextSecondary
+                              : SuperLiveTheme.lightTextSecondary,
+                          letterSpacing: 12,
+                        ),
+                        counterText: '',
+                        border: InputBorder.none,
+                      ),
+                      onChanged: (val) {
+                        if (errorMessage.isNotEmpty) {
+                          setState(() => errorMessage = '');
+                        }
+                        if (val.length == 4) _verifyPin();
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: primaryColor,
+                        foregroundColor: isDark ? Colors.black : Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        elevation: 0,
+                      ),
+                      onPressed: _verifyPin,
+                      child: const Text(
+                        'Unlock',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (isBiometricSupported) ...[
+                    const SizedBox(height: 14),
+                    TextButton.icon(
+                      icon: Icon(
+                        Icons.fingerprint_rounded,
+                        color: primaryColor,
+                        size: 22,
+                      ),
+                      label: Text(
+                        'Use Biometrics',
+                        style: TextStyle(
+                          color: primaryColor,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      onPressed: _authenticateBiometrics,
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
         ),
@@ -403,7 +519,7 @@ class _AppLockScreenState extends State<AppLockScreen> {
 }
 
 // =============================================================================
-// NAVIGATION WRAPPER WITH PERSISTENT SECURE STORAGE & DEVICE MANAGEMENT
+// NAVIGATION WRAPPER WITH ANIMATED CURVED TAB INDICATOR
 // =============================================================================
 class MainNavigationWrapper extends StatefulWidget {
   const MainNavigationWrapper({super.key});
@@ -488,7 +604,7 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
       } else {
         devices.add(scannedDevice);
       }
-      _currentIndex = 0; // Jump straight to Live View tab
+      _currentIndex = 0; // Switch to Live View
     });
     _saveDevicesToStorage();
   }
@@ -497,8 +613,11 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final primaryColor = isDark
-        ? SuperLiveTheme.cyanAccent
+        ? SuperLiveTheme.darkCyanAccent
         : SuperLiveTheme.lightCyanAccent;
+    final gradientDeco = isDark
+        ? SuperLiveTheme.darkCalmGradient
+        : SuperLiveTheme.lightCalmGradient;
 
     final List<Widget> pages = [
       SuperLiveViewTab(device: devices.isNotEmpty ? devices.first : null),
@@ -516,52 +635,74 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
       ),
     ];
 
-    return Scaffold(
-      body: IndexedStack(index: _currentIndex, children: pages),
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: Theme.of(context).cardColor,
-          border: Border(
-            top: BorderSide(
-              color: isDark
-                  ? SuperLiveTheme.cardBorder
-                  : SuperLiveTheme.lightCardBorder,
-              width: 1,
-            ),
+    return Container(
+      decoration: gradientDeco,
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 250),
+          transitionBuilder: (Widget child, Animation<double> animation) {
+            return FadeTransition(opacity: animation, child: child);
+          },
+          child: KeyedSubtree(
+            key: ValueKey<int>(_currentIndex),
+            child: pages[_currentIndex],
           ),
         ),
-        child: BottomNavigationBar(
-          currentIndex: _currentIndex,
-          backgroundColor: Theme.of(context).cardColor,
-          selectedItemColor: primaryColor,
-          unselectedItemColor: isDark
-              ? SuperLiveTheme.textSecondary
-              : SuperLiveTheme.lightTextSecondary,
-          type: BottomNavigationBarType.fixed,
-          elevation: 0,
-          onTap: (index) => setState(() => _currentIndex = index),
-          items: const [
-            BottomNavigationBarItem(
-              icon: Icon(Icons.videocam_outlined),
-              activeIcon: Icon(Icons.videocam),
-              label: 'Live View',
+        bottomNavigationBar: Container(
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xF01E293B) : const Color(0xF0FFFFFF),
+            border: Border(
+              top: BorderSide(
+                color: isDark
+                    ? SuperLiveTheme.darkCardBorder
+                    : SuperLiveTheme.lightCardBorder,
+                width: 1,
+              ),
             ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.sensor_door_outlined),
-              activeIcon: Icon(Icons.sensor_door),
-              label: 'Gates',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.view_list_rounded),
-              activeIcon: Icon(Icons.list_alt_rounded),
-              label: 'Device List',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.settings_outlined),
-              activeIcon: Icon(Icons.settings),
-              label: 'Settings',
-            ),
-          ],
+            boxShadow: [
+              BoxShadow(
+                color: isDark ? Colors.black54 : Colors.black12,
+                blurRadius: 12,
+                offset: const Offset(0, -2),
+              ),
+            ],
+          ),
+          child: BottomNavigationBar(
+            currentIndex: _currentIndex,
+            backgroundColor: Colors.transparent,
+            selectedItemColor: primaryColor,
+            unselectedItemColor: isDark
+                ? SuperLiveTheme.darkTextSecondary
+                : SuperLiveTheme.lightTextSecondary,
+            type: BottomNavigationBarType.fixed,
+            elevation: 0,
+            selectedFontSize: 11,
+            unselectedFontSize: 11,
+            onTap: (index) => setState(() => _currentIndex = index),
+            items: const [
+              BottomNavigationBarItem(
+                icon: Icon(Icons.videocam_outlined),
+                activeIcon: Icon(Icons.videocam),
+                label: 'Live View',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.sensor_door_outlined),
+                activeIcon: Icon(Icons.sensor_door),
+                label: 'Gates',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.devices_rounded),
+                activeIcon: Icon(Icons.devices_rounded),
+                label: 'Devices',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.settings_outlined),
+                activeIcon: Icon(Icons.settings),
+                label: 'Settings',
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -569,7 +710,7 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
 }
 
 // =============================================================================
-// TAB 1: POLISHED LIVE VIEW TAB WITH CHANNEL SWITCHER ARROWS IN 1X1 MODE
+// TAB 1: POLISHED LIVE VIEW TAB WITH CUSTOM HEADER BAR
 // =============================================================================
 class SuperLiveViewTab extends StatefulWidget {
   final NvrDevice? device;
@@ -605,16 +746,22 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
     final device = widget.device;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final primaryColor = isDark
-        ? SuperLiveTheme.cyanAccent
+        ? SuperLiveTheme.darkCyanAccent
         : SuperLiveTheme.lightCyanAccent;
 
     return Scaffold(
-      appBar: AppBar(
-        title: Row(
+      backgroundColor: Colors.transparent,
+      appBar: buildCustomHeaderBar(
+        context,
+        title: '',
+        titleWidget: Row(
           children: [
             Icon(Icons.videocam_outlined, color: primaryColor, size: 22),
             const SizedBox(width: 8),
-            Text(device != null ? '${device.name} (Live)' : 'CCTV Stream'),
+            Text(
+              device != null ? '${device.name} (Live)' : 'CCTV Stream',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
           ],
         ),
         actions: [
@@ -630,7 +777,6 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
       ),
       body: Column(
         children: [
-          // Stream Video View Box with Channel Switcher Arrows in 1x1 mode
           Expanded(
             flex: 4,
             child: Container(
@@ -656,7 +802,6 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
                   : Stack(
                       children: [
                         _buildGridPlayerView(device),
-                        // Channel Switcher Arrows overlay in 1x1 mode
                         if (gridLayout == 1) ...[
                           Positioned(
                             left: 8,
@@ -705,7 +850,9 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
           // Control Toolbar
           Container(
             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-            color: Theme.of(context).cardColor,
+            color: isDark
+                ? SuperLiveTheme.darkSurface
+                : SuperLiveTheme.lightSurface,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
@@ -732,7 +879,7 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
                   icon: Icon(
                     Icons.camera_alt_rounded,
                     color: isDark
-                        ? SuperLiveTheme.textPrimary
+                        ? SuperLiveTheme.darkTextPrimary
                         : SuperLiveTheme.lightTextPrimary,
                   ),
                   tooltip: 'Snapshot',
@@ -796,13 +943,15 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
           Divider(
             height: 1,
             color: isDark
-                ? SuperLiveTheme.cardBorder
+                ? SuperLiveTheme.darkCardBorder
                 : SuperLiveTheme.lightCardBorder,
           ),
 
           // Grid Switcher Bar
           Container(
-            color: Theme.of(context).cardColor,
+            color: isDark
+                ? SuperLiveTheme.darkSurface
+                : SuperLiveTheme.lightSurface,
             padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -812,7 +961,7 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
                   style: TextStyle(
                     fontSize: 12,
                     color: isDark
-                        ? SuperLiveTheme.textSecondary
+                        ? SuperLiveTheme.darkTextSecondary
                         : SuperLiveTheme.lightTextSecondary,
                     fontWeight: FontWeight.w600,
                   ),
@@ -848,12 +997,12 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
         decoration: BoxDecoration(
           color: isSelected
               ? primaryColor.withValues(alpha: 0.15)
-              : Theme.of(context).scaffoldBackgroundColor,
+              : (isDark ? Colors.black26 : SuperLiveTheme.lightBackground),
           border: Border.all(
             color: isSelected
                 ? primaryColor
                 : (isDark
-                      ? SuperLiveTheme.cardBorder
+                      ? SuperLiveTheme.darkCardBorder
                       : SuperLiveTheme.lightCardBorder),
           ),
           borderRadius: BorderRadius.circular(10),
@@ -939,7 +1088,7 @@ class _LiveStreamTileState extends State<LiveStreamTile> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final primaryColor = isDark
-        ? SuperLiveTheme.cyanAccent
+        ? SuperLiveTheme.darkCyanAccent
         : SuperLiveTheme.lightCyanAccent;
 
     return Stack(
@@ -1035,7 +1184,7 @@ class _FullscreenPlayerModalState extends State<FullscreenPlayerModal> {
             aspectRatio: 16 / 9,
             placeholder: const Center(
               child: CircularProgressIndicator(
-                color: SuperLiveTheme.cyanAccent,
+                color: SuperLiveTheme.darkCyanAccent,
               ),
             ),
           ),
@@ -1046,7 +1195,7 @@ class _FullscreenPlayerModalState extends State<FullscreenPlayerModal> {
 }
 
 // =============================================================================
-// TAB 2: GATES CONTROL TAB (MAIN GATE & INSIDE GATE WITH OPEN BUTTON)
+// TAB 2: GATES CONTROL TAB WITH DISTINCT HEADER BAR
 // =============================================================================
 class GatesControlTab extends StatefulWidget {
   final String esp32Ip;
@@ -1133,7 +1282,7 @@ class _GatesControlTabState extends State<GatesControlTab> {
           fbActive
               ? 'Signal sent to Firebase Cloud 🚀'
               : 'Direct IP unreachable',
-          fbActive ? SuperLiveTheme.cyanAccent : SuperLiveTheme.redAlert,
+          fbActive ? SuperLiveTheme.darkCyanAccent : SuperLiveTheme.redAlert,
         );
       }
     }
@@ -1154,11 +1303,12 @@ class _GatesControlTabState extends State<GatesControlTab> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final primaryColor = isDark
-        ? SuperLiveTheme.cyanAccent
+        ? SuperLiveTheme.darkCyanAccent
         : SuperLiveTheme.lightCyanAccent;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Gate Access Controls')),
+      backgroundColor: Colors.transparent,
+      appBar: buildCustomHeaderBar(context, title: 'Gate Access Controls'),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20.0),
         child: Column(
@@ -1168,11 +1318,13 @@ class _GatesControlTabState extends State<GatesControlTab> {
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: Theme.of(context).cardColor,
+                color: isDark
+                    ? SuperLiveTheme.darkSurface
+                    : SuperLiveTheme.lightSurface,
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
                   color: isDark
-                      ? SuperLiveTheme.cardBorder
+                      ? SuperLiveTheme.darkCardBorder
                       : SuperLiveTheme.lightCardBorder,
                 ),
               ),
@@ -1314,7 +1466,7 @@ class _AnimatedGateCardWidgetState extends State<AnimatedGateCardWidget>
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final primaryColor = isDark
-        ? SuperLiveTheme.cyanAccent
+        ? SuperLiveTheme.darkCyanAccent
         : SuperLiveTheme.lightCyanAccent;
     final statusColor = widget.isOpen
         ? SuperLiveTheme.greenOnline
@@ -1326,13 +1478,15 @@ class _AnimatedGateCardWidgetState extends State<AnimatedGateCardWidget>
         return Container(
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            color: Theme.of(context).cardColor,
+            color: isDark
+                ? SuperLiveTheme.darkSurface
+                : SuperLiveTheme.lightSurface,
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
               color: widget.isOpen
                   ? SuperLiveTheme.greenOnline
                   : (isDark
-                        ? SuperLiveTheme.cardBorder
+                        ? SuperLiveTheme.darkCardBorder
                         : SuperLiveTheme.lightCardBorder),
               width: widget.isOpen ? 2 : 1,
             ),
@@ -1437,7 +1591,7 @@ class _AnimatedGateCardWidgetState extends State<AnimatedGateCardWidget>
 }
 
 // =============================================================================
-// TAB 3: DEVICE LIST WITH ACCURATE XML QR SCANNER & DELETE DEVICE
+// TAB 3: DEVICE LIST WITH CUSTOM DISTINCT HEADER BAR
 // =============================================================================
 class DeviceListTab extends StatelessWidget {
   final List<NvrDevice> devices;
@@ -1472,13 +1626,15 @@ class DeviceListTab extends StatelessWidget {
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final primaryColor = isDark
-        ? SuperLiveTheme.cyanAccent
+        ? SuperLiveTheme.darkCyanAccent
         : SuperLiveTheme.lightCyanAccent;
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Theme.of(context).cardColor,
+      backgroundColor: isDark
+          ? SuperLiveTheme.darkSurface
+          : SuperLiveTheme.lightSurface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -1702,7 +1858,7 @@ class DeviceListTab extends StatelessWidget {
                               content: Text(
                                 'Scanned S/N: ${parsedDevice.serialNumber}',
                               ),
-                              backgroundColor: SuperLiveTheme.cyanAccent,
+                              backgroundColor: SuperLiveTheme.darkCyanAccent,
                               behavior: SnackBarBehavior.floating,
                             ),
                           );
@@ -1773,7 +1929,6 @@ class DeviceListTab extends StatelessWidget {
 
     final cleanData = rawQrData.trim();
 
-    // 1. Try XML Tag Parsing e.g. <sn>N1D3F02CSF82</sn><user>admin</user>
     if (cleanData.contains('<') && cleanData.contains('>')) {
       final snMatch = RegExp(
         r'<(?:sn|serial|id|dev_sn)>(.*?)</(?:sn|serial|id|dev_sn)>',
@@ -1808,7 +1963,6 @@ class DeviceListTab extends StatelessWidget {
       }
     }
 
-    // 2. Try JSON parsing
     if (sn.isEmpty) {
       try {
         final Map<String, dynamic> json = jsonDecode(cleanData);
@@ -1825,7 +1979,6 @@ class DeviceListTab extends StatelessWidget {
       } catch (_) {}
     }
 
-    // 3. Try Key-Value parsing e.g. "sn=N1D3F02CSF82;user=admin;pass=123"
     if (sn.isEmpty && cleanData.contains('=')) {
       final pairs = cleanData.split(RegExp(r'[;&,\n]'));
       for (final pair in pairs) {
@@ -1841,7 +1994,6 @@ class DeviceListTab extends StatelessWidget {
       }
     }
 
-    // 4. Fallback: Strip any raw tags if present
     if (sn.isEmpty) {
       sn = cleanData.replaceAll(RegExp(r'<[^>]*>'), '').trim();
     }
@@ -1860,24 +2012,26 @@ class DeviceListTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final primaryColor = isDark
-        ? SuperLiveTheme.cyanAccent
+        ? SuperLiveTheme.darkCyanAccent
         : SuperLiveTheme.lightCyanAccent;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Device List (NVR / DVR)'),
+      backgroundColor: Colors.transparent,
+      appBar: buildCustomHeaderBar(
+        context,
+        title: 'Device List (NVR / DVR)',
         actions: [
           IconButton(
             icon: Icon(
               Icons.qr_code_scanner_rounded,
               color: primaryColor,
-              size: 26,
+              size: 24,
             ),
             tooltip: 'Instant Smart QR Scan',
             onPressed: () => _openSmartScanAndJump(context),
           ),
           IconButton(
-            icon: Icon(Icons.add_rounded, color: primaryColor, size: 28),
+            icon: Icon(Icons.add_rounded, color: primaryColor, size: 26),
             onPressed: () => _showAddOrEditDeviceModal(context),
           ),
         ],
@@ -1891,11 +2045,13 @@ class DeviceListTab extends StatelessWidget {
           return Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Theme.of(context).cardColor,
+              color: isDark
+                  ? SuperLiveTheme.darkSurface
+                  : SuperLiveTheme.lightSurface,
               borderRadius: BorderRadius.circular(18),
               border: Border.all(
                 color: isDark
-                    ? SuperLiveTheme.cardBorder
+                    ? SuperLiveTheme.darkCardBorder
                     : SuperLiveTheme.lightCardBorder,
               ),
             ),
@@ -1930,7 +2086,7 @@ class DeviceListTab extends StatelessWidget {
                           style: TextStyle(
                             fontSize: 12,
                             color: isDark
-                                ? SuperLiveTheme.textSecondary
+                                ? SuperLiveTheme.darkTextSecondary
                                 : SuperLiveTheme.lightTextSecondary,
                           ),
                         ),
@@ -1961,7 +2117,7 @@ class DeviceListTab extends StatelessWidget {
 }
 
 // =============================================================================
-// TAB 4: SETTINGS TAB WITH DARK / LIGHT THEME TOGGLE
+// TAB 4: SETTINGS TAB WITH CUSTOM DISTINCT HEADER BAR
 // =============================================================================
 class SettingsTab extends StatelessWidget {
   final String esp32Ip;
@@ -1979,11 +2135,12 @@ class SettingsTab extends StatelessWidget {
     final appState = SuperLiveSmartHomeApp.of(context);
     final isDark = appState?.isDarkMode ?? true;
     final primaryColor = isDark
-        ? SuperLiveTheme.cyanAccent
+        ? SuperLiveTheme.darkCyanAccent
         : SuperLiveTheme.lightCyanAccent;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('System Settings')),
+      backgroundColor: Colors.transparent,
+      appBar: buildCustomHeaderBar(context, title: 'System Settings'),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -1999,11 +2156,13 @@ class SettingsTab extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: Theme.of(context).cardColor,
+                color: isDark
+                    ? SuperLiveTheme.darkSurface
+                    : SuperLiveTheme.lightSurface,
                 borderRadius: BorderRadius.circular(18),
                 border: Border.all(
                   color: isDark
-                      ? SuperLiveTheme.cardBorder
+                      ? SuperLiveTheme.darkCardBorder
                       : SuperLiveTheme.lightCardBorder,
                 ),
               ),
@@ -2025,8 +2184,8 @@ class SettingsTab extends StatelessWidget {
                 ),
                 subtitle: Text(
                   isDark
-                      ? 'Sleek obsidian dark UI active'
-                      : 'Clean bright light UI active',
+                      ? 'Calm charcoal dark UI active'
+                      : 'Soft pearl light UI active',
                   style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
                 value: isDark,
@@ -2049,7 +2208,9 @@ class SettingsTab extends StatelessWidget {
               decoration: InputDecoration(
                 hintText: '192.168.1.50',
                 filled: true,
-                fillColor: Theme.of(context).cardColor,
+                fillColor: isDark
+                    ? SuperLiveTheme.darkSurface
+                    : SuperLiveTheme.lightSurface,
                 prefixIcon: Icon(Icons.router_outlined, color: primaryColor),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(16),
