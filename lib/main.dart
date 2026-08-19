@@ -154,7 +154,7 @@ class NvrDevice {
     required this.password,
     this.ip = '192.168.1.100',
     this.port = 554,
-    this.channelCount = 4,
+    this.channelCount = 40,
     this.isOnline = true,
     this.rtspPath = '/ch{channel}/{stream}',
   });
@@ -181,7 +181,7 @@ class NvrDevice {
       password: (json['password'] ?? '').toString(),
       ip: (json['ip'] ?? '192.168.1.100').toString(),
       port: _toInt(json['port'], 554),
-      channelCount: _toInt(json['channelCount'], 4),
+      channelCount: _toInt(json['channelCount'], 40),
       isOnline: json['isOnline'] is bool ? json['isOnline'] as bool : true,
       rtspPath: (json['rtspPath'] ?? '/ch{channel}/{stream}').toString(),
     );
@@ -782,7 +782,7 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
 }
 
 // ============================================================================
-// LIVE VIEW
+// LIVE VIEW - مع شريط أسكرول الكاميرات بالخارج من 1 لـ 40
 // ============================================================================
 
 class SuperLiveViewTab extends StatefulWidget {
@@ -803,21 +803,39 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
   bool isIntercomActive = false;
   bool isHdMode = true;
 
-  void _nextChannel(int totalChannels) {
-    if (totalChannels <= 0) return;
+  final ScrollController _cameraScrollController = ScrollController();
 
+  @override
+  void dispose() {
+    _cameraScrollController.dispose();
+    super.dispose();
+  }
+
+  void _nextChannel(int totalChannels) {
+    final maxChannels = totalChannels > 40 ? totalChannels : 40;
     setState(() {
-      selectedChannel = (selectedChannel % totalChannels) + 1;
+      selectedChannel = (selectedChannel % maxChannels) + 1;
     });
+    _scrollToSelectedChannel();
   }
 
   void _prevChannel(int totalChannels) {
-    if (totalChannels <= 0) return;
-
+    final maxChannels = totalChannels > 40 ? totalChannels : 40;
     setState(() {
-      selectedChannel =
-          (selectedChannel - 2 + totalChannels) % totalChannels + 1;
+      selectedChannel = (selectedChannel - 2 + maxChannels) % maxChannels + 1;
     });
+    _scrollToSelectedChannel();
+  }
+
+  void _scrollToSelectedChannel() {
+    if (_cameraScrollController.hasClients) {
+      final targetOffset = (selectedChannel - 1) * 85.0;
+      _cameraScrollController.animateTo(
+        targetOffset,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+    }
   }
 
   @override
@@ -828,6 +846,8 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
     final primaryColor = isDark
         ? SuperLiveTheme.darkCyanAccent
         : SuperLiveTheme.lightCyanAccent;
+
+    const int totalCamerasCount = 40; // اختيار الكاميرات من 1 إلى 40
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -840,7 +860,9 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                device != null ? '${device.name} (Live)' : 'CCTV Stream',
+                device != null
+                    ? '${device.name} (كاميرا $selectedChannel)'
+                    : 'CCTV Stream',
                 style: const TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
@@ -935,6 +957,100 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
                     ),
             ),
           ),
+
+          // 🌟🌟 شريط تمرير الكاميرات (الأسكرول) من 1 إلى 40 بالخارج 🌟🌟
+          Container(
+            height: 60,
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF131A2B) : const Color(0xFFE2E8F0),
+              border: Border(
+                top: BorderSide(
+                  color: isDark
+                      ? SuperLiveTheme.darkCardBorder
+                      : SuperLiveTheme.lightCardBorder,
+                  width: 1,
+                ),
+                bottom: BorderSide(
+                  color: isDark
+                      ? SuperLiveTheme.darkCardBorder
+                      : SuperLiveTheme.lightCardBorder,
+                  width: 1,
+                ),
+              ),
+            ),
+            child: ListView.builder(
+              controller: _cameraScrollController,
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              itemCount: totalCamerasCount,
+              itemBuilder: (context, index) {
+                final camNum = index + 1;
+                final isSelected = selectedChannel == camNum;
+
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: InkWell(
+                    onTap: () {
+                      setState(() {
+                        selectedChannel = camNum;
+                      });
+                      _scrollToSelectedChannel();
+                    },
+                    borderRadius: BorderRadius.circular(12),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? primaryColor
+                            : (isDark
+                                  ? SuperLiveTheme.darkSurface
+                                  : SuperLiveTheme.lightSurface),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isSelected
+                              ? primaryColor
+                              : (isDark
+                                    ? SuperLiveTheme.darkCardBorder
+                                    : SuperLiveTheme.lightCardBorder),
+                          width: isSelected ? 2 : 1,
+                        ),
+                        boxShadow: isSelected
+                            ? [
+                                BoxShadow(
+                                  color: primaryColor.withValues(alpha: 0.4),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ]
+                            : [],
+                      ),
+                      child: Center(
+                        child: Text(
+                          'كاميرا $camNum',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: isSelected
+                                ? (isDark ? Colors.black : Colors.white)
+                                : (isDark
+                                      ? SuperLiveTheme.darkTextPrimary
+                                      : SuperLiveTheme.lightTextPrimary),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+
+          // شريط أدوات التحكم (صوت، مايك، لقطة، تسجيل، شاشة كاملة)
           Container(
             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
             color: isDark
@@ -1029,7 +1145,7 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
             color: isDark
                 ? SuperLiveTheme.darkSurface
                 : SuperLiveTheme.lightSurface,
-            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -1043,7 +1159,7 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -1096,7 +1212,7 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
       },
       borderRadius: BorderRadius.circular(10),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
         decoration: BoxDecoration(
           color: isSelected
               ? primaryColor.withValues(alpha: 0.15)
@@ -1124,7 +1240,7 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
   Widget _buildGridPlayerView(NvrDevice device) {
     if (gridLayout == 1) {
       return LiveStreamTile(
-        channelName: 'Channel $selectedChannel',
+        channelName: 'كاميرا $selectedChannel',
         rtspUrl: device.getRtspUrl(selectedChannel, isSubStream: !isHdMode),
       );
     }
@@ -1839,7 +1955,7 @@ class DeviceListTab extends StatelessWidget {
       text: existingDevice?.rtspPath ?? '/ch{channel}/{stream}',
     );
 
-    int selectedChannelCount = existingDevice?.channelCount ?? 4;
+    int selectedChannelCount = existingDevice?.channelCount ?? 40;
     bool showAdvanced = false;
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -2010,9 +2126,8 @@ class DeviceListTab extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 16),
-                    // 🌟 اختيار عدد الكاميرات بالخارج بأسلوب منظم وسهل 🌟
                     DropdownButtonFormField<int>(
-                      initialValue:
+                      value:
                           [
                             1,
                             2,
@@ -2020,10 +2135,11 @@ class DeviceListTab extends StatelessWidget {
                             8,
                             16,
                             32,
+                            40,
                             64,
                           ].contains(selectedChannelCount)
                           ? selectedChannelCount
-                          : 4,
+                          : 40,
                       decoration: const InputDecoration(
                         labelText: 'Number of Channels / عدد الكاميرات',
                         prefixIcon: Icon(Icons.videocam_outlined),
@@ -2055,6 +2171,10 @@ class DeviceListTab extends StatelessWidget {
                         DropdownMenuItem(
                           value: 32,
                           child: Text('32 Channels (32 كاميرا)'),
+                        ),
+                        DropdownMenuItem(
+                          value: 40,
+                          child: Text('40 Channels (40 كاميرا)'),
                         ),
                         DropdownMenuItem(
                           value: 64,
@@ -2385,7 +2505,7 @@ class DeviceListTab extends StatelessWidget {
           password: result.password,
           ip: result.ip.isNotEmpty ? result.ip : '192.168.1.100',
           port: result.port ?? 554,
-          channelCount: 4,
+          channelCount: 40,
         );
 
         onSmartScanAddAndOpen(device);
