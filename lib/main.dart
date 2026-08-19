@@ -1,30 +1,32 @@
-import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
-import 'package:local_auth/local_auth.dart';
-import 'package:flutter_vlc_player/flutter_vlc_player.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_vlc_player/flutter_vlc_player.dart';
+import 'package:http/http.dart' as http;
+import 'package:local_auth/local_auth.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
   try {
     await Firebase.initializeApp();
   } catch (e) {
     debugPrint('Firebase init notice: $e');
   }
+
   runApp(const SuperLiveSmartHomeApp());
 }
 
-// =============================================================================
-// SUPERLIVE CALM & ELEGANT COLOR PALETTES (DARK & LIGHT GRADIENTS)
-// =============================================================================
+// ============================================================================
+// THEME
+// ============================================================================
+
 class SuperLiveTheme {
-  // Calm Dark Theme Background Gradient
   static const BoxDecoration darkCalmGradient = BoxDecoration(
     gradient: LinearGradient(
       begin: Alignment.topCenter,
@@ -39,7 +41,6 @@ class SuperLiveTheme {
     ),
   );
 
-  // Calm Light Theme Background Gradient
   static const BoxDecoration lightCalmGradient = BoxDecoration(
     gradient: LinearGradient(
       begin: Alignment.topCenter,
@@ -54,7 +55,6 @@ class SuperLiveTheme {
     ),
   );
 
-  // Dark Theme Accent Colors
   static const Color darkBackground = Color(0xFF0B0F19);
   static const Color darkSurface = Color(0xCC1A233A);
   static const Color darkCardBorder = Color(0x4038BDF8);
@@ -65,7 +65,6 @@ class SuperLiveTheme {
   static const Color darkTextPrimary = Color(0xFFF8FAFC);
   static const Color darkTextSecondary = Color(0xFF94A3B8);
 
-  // Light Theme Accent Colors
   static const Color lightBackground = Color(0xFFF8FAFC);
   static const Color lightSurface = Color(0xCCFFFFFF);
   static const Color lightCardBorder = Color(0x400284C7);
@@ -74,9 +73,6 @@ class SuperLiveTheme {
   static const Color lightTextSecondary = Color(0xFF475569);
 }
 
-// =============================================================================
-// REUSABLE DISTINCT HEADER BAR CONTAINER
-// =============================================================================
 PreferredSizeWidget buildCustomHeaderBar(
   BuildContext context, {
   required String title,
@@ -134,9 +130,10 @@ PreferredSizeWidget buildCustomHeaderBar(
   );
 }
 
-// =============================================================================
-// DVR / NVR DEVICE MODEL
-// =============================================================================
+// ============================================================================
+// DVR / NVR MODEL
+// ============================================================================
+
 class NvrDevice {
   final String id;
   String name;
@@ -147,6 +144,7 @@ class NvrDevice {
   int port;
   int channelCount;
   bool isOnline;
+  String rtspPath;
 
   NvrDevice({
     required this.id,
@@ -154,10 +152,11 @@ class NvrDevice {
     required this.serialNumber,
     required this.username,
     required this.password,
-    this.ip = "192.168.1.100",
+    this.ip = '192.168.1.100',
     this.port = 554,
-    this.channelCount = 16,
+    this.channelCount = 4,
     this.isOnline = true,
+    this.rtspPath = '/ch{channel}/{stream}',
   });
 
   Map<String, dynamic> toJson() => {
@@ -170,46 +169,63 @@ class NvrDevice {
     'port': port,
     'channelCount': channelCount,
     'isOnline': isOnline,
+    'rtspPath': rtspPath,
   };
 
-  factory NvrDevice.fromJson(Map<String, dynamic> json) => NvrDevice(
-    id: json['id'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
-    name: json['name'] ?? 'Home DVR',
-    serialNumber: json['serialNumber'] ?? '',
-    username: json['username'] ?? 'admin',
-    password: json['password'] ?? '',
-    ip: json['ip'] ?? '192.168.1.100',
-    port: json['port'] ?? 554,
-    channelCount: json['channelCount'] ?? 16,
-    isOnline: json['isOnline'] ?? true,
-  );
+  factory NvrDevice.fromJson(Map<String, dynamic> json) {
+    return NvrDevice(
+      id: (json['id'] ?? DateTime.now().millisecondsSinceEpoch).toString(),
+      name: (json['name'] ?? 'Home DVR').toString(),
+      serialNumber: (json['serialNumber'] ?? '').toString(),
+      username: (json['username'] ?? 'admin').toString(),
+      password: (json['password'] ?? '').toString(),
+      ip: (json['ip'] ?? '192.168.1.100').toString(),
+      port: _toInt(json['port'], 554),
+      channelCount: _toInt(json['channelCount'], 4),
+      isOnline: json['isOnline'] is bool ? json['isOnline'] as bool : true,
+      rtspPath: (json['rtspPath'] ?? '/ch{channel}/{stream}').toString(),
+    );
+  }
+
+  static int _toInt(dynamic value, int fallback) {
+    if (value is int) return value;
+    return int.tryParse(value?.toString() ?? '') ?? fallback;
+  }
 
   String getRtspUrl(int channelIndex, {bool isSubStream = true}) {
-    final authPart = (username.isNotEmpty && password.isNotEmpty)
-        ? '$username:$password@'
+    final authPart = username.isNotEmpty && password.isNotEmpty
+        ? '${Uri.encodeComponent(username)}:${Uri.encodeComponent(password)}@'
         : '';
+
     final streamType = isSubStream ? 'sub' : 'main';
-    final host = serialNumber.isNotEmpty ? serialNumber : ip;
-    return 'rtsp://$authPart$host:$port/ch$channelIndex/$streamType';
+    final host = ip.trim().isNotEmpty ? ip.trim() : serialNumber.trim();
+
+    final path = rtspPath
+        .replaceAll('{channel}', channelIndex.toString())
+        .replaceAll('{stream}', streamType);
+
+    return 'rtsp://$authPart$host:$port$path';
   }
 }
 
-// =============================================================================
-// MAIN ENTRY POINT WITH PERSISTENT SECURE STORAGE THEME SWITCHER
-// =============================================================================
+// ============================================================================
+// APP
+// ============================================================================
+
 class SuperLiveSmartHomeApp extends StatefulWidget {
   const SuperLiveSmartHomeApp({super.key});
 
-  static SuperLiveSmartHomeAppState? of(BuildContext context) =>
-      context.findAncestorStateOfType<SuperLiveSmartHomeAppState>();
+  static SuperLiveSmartHomeAppState? of(BuildContext context) {
+    return context.findAncestorStateOfType<SuperLiveSmartHomeAppState>();
+  }
 
   @override
   State<SuperLiveSmartHomeApp> createState() => SuperLiveSmartHomeAppState();
 }
 
 class SuperLiveSmartHomeAppState extends State<SuperLiveSmartHomeApp> {
-  static const _storage = FlutterSecureStorage();
-  static const _themeStorageKey = 'app_theme_mode';
+  static const FlutterSecureStorage _storage = FlutterSecureStorage();
+  static const String _themeStorageKey = 'app_theme_mode';
 
   ThemeMode _themeMode = ThemeMode.dark;
 
@@ -222,11 +238,12 @@ class SuperLiveSmartHomeAppState extends State<SuperLiveSmartHomeApp> {
   Future<void> _loadSavedTheme() async {
     try {
       final savedTheme = await _storage.read(key: _themeStorageKey);
-      if (savedTheme == 'light') {
-        setState(() => _themeMode = ThemeMode.light);
-      } else if (savedTheme == 'dark') {
-        setState(() => _themeMode = ThemeMode.dark);
-      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _themeMode = savedTheme == 'light' ? ThemeMode.light : ThemeMode.dark;
+      });
     } catch (e) {
       debugPrint('Error loading saved theme: $e');
     }
@@ -234,16 +251,18 @@ class SuperLiveSmartHomeAppState extends State<SuperLiveSmartHomeApp> {
 
   Future<void> toggleTheme(bool isDark) async {
     final newMode = isDark ? ThemeMode.dark : ThemeMode.light;
+
     setState(() {
       _themeMode = newMode;
     });
+
     try {
       await _storage.write(
         key: _themeStorageKey,
         value: isDark ? 'dark' : 'light',
       );
     } catch (e) {
-      debugPrint('Error saving theme choice: $e');
+      debugPrint('Error saving theme: $e');
     }
   }
 
@@ -255,19 +274,22 @@ class SuperLiveSmartHomeAppState extends State<SuperLiveSmartHomeApp> {
       debugShowCheckedModeBanner: false,
       title: 'SuperLive Smart Home',
       themeMode: _themeMode,
-      theme: ThemeData.light().copyWith(
+      theme: ThemeData(
+        brightness: Brightness.light,
         scaffoldBackgroundColor: Colors.transparent,
         colorScheme: const ColorScheme.light(
           primary: SuperLiveTheme.lightCyanAccent,
-          surface: SuperLiveTheme.lightSurface,
+          surface: Colors.white,
         ),
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.transparent,
           foregroundColor: SuperLiveTheme.lightTextPrimary,
           elevation: 0,
         ),
+        useMaterial3: true,
       ),
-      darkTheme: ThemeData.dark().copyWith(
+      darkTheme: ThemeData(
+        brightness: Brightness.dark,
         scaffoldBackgroundColor: Colors.transparent,
         colorScheme: const ColorScheme.dark(
           primary: SuperLiveTheme.darkCyanAccent,
@@ -278,17 +300,17 @@ class SuperLiveSmartHomeAppState extends State<SuperLiveSmartHomeApp> {
           foregroundColor: SuperLiveTheme.darkTextPrimary,
           elevation: 0,
         ),
+        useMaterial3: true,
       ),
-      // Opens directly on the PIN lock screen — no splash screen delay
-      // before it, animated or not.
       home: const AppLockScreen(),
     );
   }
 }
 
-// =============================================================================
-// SECURITY PIN LOCK SCREEN — Simple & Clean Design
-// =============================================================================
+// ============================================================================
+// LOCK SCREEN
+// ============================================================================
+
 class AppLockScreen extends StatefulWidget {
   const AppLockScreen({super.key});
 
@@ -301,6 +323,7 @@ class _AppLockScreenState extends State<AppLockScreen> {
   final LocalAuthentication auth = LocalAuthentication();
 
   static const String _savedPin = '2011';
+
   bool isBiometricSupported = false;
   String errorMessage = '';
 
@@ -318,36 +341,56 @@ class _AppLockScreenState extends State<AppLockScreen> {
 
   Future<void> _checkBiometrics() async {
     try {
-      final bool canCheck = await auth.canCheckBiometrics;
-      final bool isSupported = await auth.isDeviceSupported();
-      if (mounted) {
-        setState(() => isBiometricSupported = canCheck || isSupported);
+      final canCheck = await auth.canCheckBiometrics;
+      final isSupported = await auth.isDeviceSupported();
+
+      final supported = canCheck || isSupported;
+
+      if (!mounted) return;
+
+      setState(() {
+        isBiometricSupported = supported;
+      });
+
+      if (supported) {
+        await _authenticateBiometrics();
       }
-      if (isBiometricSupported) _authenticateBiometrics();
-    } catch (_) {}
+    } on PlatformException catch (e) {
+      debugPrint('Biometric check error: $e');
+    } catch (e) {
+      debugPrint('Biometric check error: $e');
+    }
   }
 
   Future<void> _authenticateBiometrics() async {
     try {
-      final bool ok = await auth.authenticate(
+      final ok = await auth.authenticate(
         localizedReason: 'Authenticate to access SuperLive',
       );
-      if (ok && mounted) _unlockApp();
-    } on PlatformException catch (_) {}
+
+      if (ok && mounted) {
+        _unlockApp();
+      }
+    } on PlatformException catch (e) {
+      debugPrint('Biometric authentication error: $e');
+    } catch (e) {
+      debugPrint('Biometric authentication error: $e');
+    }
   }
 
   void _verifyPin() {
     if (_pinController.text == _savedPin) {
       _unlockApp();
     } else {
-      setState(() => errorMessage = 'Wrong PIN, try again');
+      setState(() {
+        errorMessage = 'Wrong PIN, try again';
+      });
       _pinController.clear();
     }
   }
 
   void _unlockApp() {
-    Navigator.pushReplacement(
-      context,
+    Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const MainNavigationWrapper()),
     );
   }
@@ -355,9 +398,11 @@ class _AppLockScreenState extends State<AppLockScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+
     final primaryColor = isDark
         ? SuperLiveTheme.darkCyanAccent
         : SuperLiveTheme.lightCyanAccent;
+
     final gradientDeco = isDark
         ? SuperLiveTheme.darkCalmGradient
         : SuperLiveTheme.lightCalmGradient;
@@ -373,7 +418,6 @@ class _AppLockScreenState extends State<AppLockScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Lock icon
                   Container(
                     width: 70,
                     height: 70,
@@ -403,7 +447,6 @@ class _AppLockScreenState extends State<AppLockScreen> {
                           : SuperLiveTheme.lightTextPrimary,
                     ),
                   ),
-                  const SizedBox(height: 6),
                   if (errorMessage.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
@@ -416,7 +459,6 @@ class _AppLockScreenState extends State<AppLockScreen> {
                       ),
                     ),
                   const SizedBox(height: 24),
-                  // PIN field
                   Container(
                     decoration: BoxDecoration(
                       color: isDark
@@ -459,11 +501,14 @@ class _AppLockScreenState extends State<AppLockScreen> {
                         counterText: '',
                         border: InputBorder.none,
                       ),
-                      onChanged: (val) {
+                      onChanged: (value) {
                         if (errorMessage.isNotEmpty) {
                           setState(() => errorMessage = '');
                         }
-                        if (val.length == 4) _verifyPin();
+
+                        if (value.length == 4) {
+                          _verifyPin();
+                        }
                       },
                     ),
                   ),
@@ -518,9 +563,10 @@ class _AppLockScreenState extends State<AppLockScreen> {
   }
 }
 
-// =============================================================================
-// NAVIGATION WRAPPER WITH ANIMATED CURVED TAB INDICATOR
-// =============================================================================
+// ============================================================================
+// MAIN NAVIGATION
+// ============================================================================
+
 class MainNavigationWrapper extends StatefulWidget {
   const MainNavigationWrapper({super.key});
 
@@ -529,8 +575,10 @@ class MainNavigationWrapper extends StatefulWidget {
 }
 
 class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
-  static const _storage = FlutterSecureStorage();
-  static const _storageKey = 'saved_nvr_devices';
+  static const FlutterSecureStorage _storage = FlutterSecureStorage();
+
+  static const String _storageKey = 'saved_nvr_devices';
+  static const String _espStorageKey = 'esp32_ip';
 
   int _currentIndex = 0;
   String esp32Ip = '192.168.1.50';
@@ -540,86 +588,115 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
   @override
   void initState() {
     super.initState();
-    _loadSavedDevices();
+    _loadSavedData();
   }
 
-  Future<void> _loadSavedDevices() async {
+  Future<void> _loadSavedData() async {
     try {
       final jsonString = await _storage.read(key: _storageKey);
+      final savedIp = await _storage.read(key: _espStorageKey);
+
+      if (!mounted) return;
+
+      final loadedDevices = <NvrDevice>[];
+
       if (jsonString != null && jsonString.isNotEmpty) {
-        final List<dynamic> decodedList = jsonDecode(jsonString);
-        if (decodedList.isNotEmpty) {
-          setState(() {
-            devices = decodedList
-                .map((item) => NvrDevice.fromJson(item))
-                .toList();
-          });
+        final decoded = jsonDecode(jsonString);
+
+        if (decoded is List) {
+          for (final item in decoded) {
+            if (item is Map) {
+              loadedDevices.add(
+                NvrDevice.fromJson(Map<String, dynamic>.from(item)),
+              );
+            }
+          }
         }
       }
+
+      setState(() {
+        devices = loadedDevices;
+        if (savedIp != null && savedIp.trim().isNotEmpty) {
+          esp32Ip = savedIp.trim();
+        }
+      });
     } catch (e) {
-      debugPrint('Error loading saved devices: $e');
+      debugPrint('Error loading saved data: $e');
     }
   }
 
-  Future<void> _saveDevicesToStorage() async {
+  Future<void> _saveDevices() async {
     try {
-      final jsonString = jsonEncode(devices.map((d) => d.toJson()).toList());
-      await _storage.write(key: _storageKey, value: jsonString);
+      await _storage.write(
+        key: _storageKey,
+        value: jsonEncode(devices.map((device) => device.toJson()).toList()),
+      );
     } catch (e) {
       debugPrint('Error saving devices: $e');
     }
   }
 
-  void _addDevice(NvrDevice newDevice) {
-    setState(() {
-      devices.add(newDevice);
-    });
-    _saveDevicesToStorage();
+  Future<void> _saveEspIp(String ip) async {
+    try {
+      await _storage.write(key: _espStorageKey, value: ip);
+    } catch (e) {
+      debugPrint('Error saving ESP32 IP: $e');
+    }
   }
 
-  void _updateDevice(NvrDevice updatedDevice) {
+  void _addDevice(NvrDevice device) {
+    setState(() => devices.add(device));
+    _saveDevices();
+  }
+
+  void _updateDevice(NvrDevice device) {
     setState(() {
-      final index = devices.indexWhere((d) => d.id == updatedDevice.id);
+      final index = devices.indexWhere((d) => d.id == device.id);
       if (index != -1) {
-        devices[index] = updatedDevice;
+        devices[index] = device;
       }
     });
-    _saveDevicesToStorage();
+    _saveDevices();
   }
 
-  void _deleteDevice(String deviceId) {
+  void _deleteDevice(String id) {
     setState(() {
-      devices.removeWhere((d) => d.id == deviceId);
+      devices.removeWhere((device) => device.id == id);
     });
-    _saveDevicesToStorage();
+    _saveDevices();
   }
 
-  void _onSmartScanAddAndOpen(NvrDevice scannedDevice) {
+  void _onSmartScanAddAndOpen(NvrDevice device) {
     setState(() {
       final index = devices.indexWhere(
-        (d) => d.serialNumber == scannedDevice.serialNumber,
+        (d) => d.serialNumber == device.serialNumber,
       );
+
       if (index != -1) {
-        devices[index] = scannedDevice;
+        devices[index] = device;
       } else {
-        devices.add(scannedDevice);
+        devices.add(device);
       }
-      _currentIndex = 0; // Switch to Live View
+
+      _currentIndex = 0;
     });
-    _saveDevicesToStorage();
+
+    _saveDevices();
   }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+
     final primaryColor = isDark
         ? SuperLiveTheme.darkCyanAccent
         : SuperLiveTheme.lightCyanAccent;
+
     final gradientDeco = isDark
         ? SuperLiveTheme.darkCalmGradient
         : SuperLiveTheme.lightCalmGradient;
 
-    final List<Widget> pages = [
+    final pages = [
       SuperLiveViewTab(device: devices.isNotEmpty ? devices.first : null),
       GatesControlTab(esp32Ip: esp32Ip),
       DeviceListTab(
@@ -631,7 +708,10 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
       ),
       SettingsTab(
         esp32Ip: esp32Ip,
-        onEspIpSaved: (newIp) => setState(() => esp32Ip = newIp),
+        onEspIpSaved: (newIp) {
+          setState(() => esp32Ip = newIp);
+          _saveEspIp(newIp);
+        },
       ),
     ];
 
@@ -639,16 +719,7 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
       decoration: gradientDeco,
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        body: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 250),
-          transitionBuilder: (Widget child, Animation<double> animation) {
-            return FadeTransition(opacity: animation, child: child);
-          },
-          child: KeyedSubtree(
-            key: ValueKey<int>(_currentIndex),
-            child: pages[_currentIndex],
-          ),
-        ),
+        body: IndexedStack(index: _currentIndex, children: pages),
         bottomNavigationBar: Container(
           decoration: BoxDecoration(
             color: isDark ? const Color(0xF01E293B) : const Color(0xF0FFFFFF),
@@ -657,7 +728,6 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
                 color: isDark
                     ? SuperLiveTheme.darkCardBorder
                     : SuperLiveTheme.lightCardBorder,
-                width: 1,
               ),
             ),
             boxShadow: [
@@ -679,7 +749,9 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
             elevation: 0,
             selectedFontSize: 11,
             unselectedFontSize: 11,
-            onTap: (index) => setState(() => _currentIndex = index),
+            onTap: (index) {
+              setState(() => _currentIndex = index);
+            },
             items: const [
               BottomNavigationBarItem(
                 icon: Icon(Icons.videocam_outlined),
@@ -692,8 +764,8 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
                 label: 'Gates',
               ),
               BottomNavigationBarItem(
-                icon: Icon(Icons.devices_rounded),
-                activeIcon: Icon(Icons.devices_rounded),
+                icon: Icon(Icons.devices_outlined),
+                activeIcon: Icon(Icons.devices),
                 label: 'Devices',
               ),
               BottomNavigationBarItem(
@@ -709,11 +781,13 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
   }
 }
 
-// =============================================================================
-// TAB 1: POLISHED LIVE VIEW TAB WITH CUSTOM HEADER BAR
-// =============================================================================
+// ============================================================================
+// LIVE VIEW
+// ============================================================================
+
 class SuperLiveViewTab extends StatefulWidget {
   final NvrDevice? device;
+
   const SuperLiveViewTab({super.key, required this.device});
 
   @override
@@ -723,18 +797,23 @@ class SuperLiveViewTab extends StatefulWidget {
 class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
   int gridLayout = 1;
   int selectedChannel = 1;
+  int gridPage = 0;
   bool isMuted = true;
   bool isRecording = false;
   bool isIntercomActive = false;
   bool isHdMode = true;
 
   void _nextChannel(int totalChannels) {
+    if (totalChannels <= 0) return;
+
     setState(() {
       selectedChannel = (selectedChannel % totalChannels) + 1;
     });
   }
 
   void _prevChannel(int totalChannels) {
+    if (totalChannels <= 0) return;
+
     setState(() {
       selectedChannel =
           (selectedChannel - 2 + totalChannels) % totalChannels + 1;
@@ -745,6 +824,7 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
   Widget build(BuildContext context) {
     final device = widget.device;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+
     final primaryColor = isDark
         ? SuperLiveTheme.darkCyanAccent
         : SuperLiveTheme.lightCyanAccent;
@@ -758,9 +838,14 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
           children: [
             Icon(Icons.videocam_outlined, color: primaryColor, size: 22),
             const SizedBox(width: 8),
-            Text(
-              device != null ? '${device.name} (Live)' : 'CCTV Stream',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            Expanded(
+              child: Text(
+                device != null ? '${device.name} (Live)' : 'CCTV Stream',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
           ],
         ),
@@ -771,7 +856,9 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
               color: primaryColor,
             ),
             tooltip: 'HD/SD Quality',
-            onPressed: () => setState(() => isHdMode = !isHdMode),
+            onPressed: () {
+              setState(() => isHdMode = !isHdMode);
+            },
           ),
         ],
       ),
@@ -817,8 +904,9 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
                                   color: Colors.white,
                                   size: 32,
                                 ),
-                                onPressed: () =>
-                                    _prevChannel(device.channelCount),
+                                onPressed: () {
+                                  _prevChannel(device.channelCount);
+                                },
                               ),
                             ),
                           ),
@@ -836,8 +924,9 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
                                   color: Colors.white,
                                   size: 32,
                                 ),
-                                onPressed: () =>
-                                    _nextChannel(device.channelCount),
+                                onPressed: () {
+                                  _nextChannel(device.channelCount);
+                                },
                               ),
                             ),
                           ),
@@ -846,8 +935,6 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
                     ),
             ),
           ),
-
-          // Control Toolbar
           Container(
             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
             color: isDark
@@ -863,33 +950,33 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
                         : Icons.volume_up_rounded,
                     color: isMuted ? Colors.grey : primaryColor,
                   ),
-                  tooltip: 'Mute/Unmute',
-                  onPressed: () => setState(() => isMuted = !isMuted),
+                  onPressed: () {
+                    setState(() => isMuted = !isMuted);
+                  },
                 ),
                 IconButton(
                   icon: Icon(
                     Icons.mic_rounded,
                     color: isIntercomActive ? primaryColor : Colors.grey,
                   ),
-                  tooltip: 'Two-Way Intercom',
-                  onPressed: () =>
-                      setState(() => isIntercomActive = !isIntercomActive),
+                  onPressed: () {
+                    setState(() {
+                      isIntercomActive = !isIntercomActive;
+                    });
+                  },
                 ),
                 IconButton(
                   icon: Icon(
                     Icons.camera_alt_rounded,
                     color: isDark
-                        ? SuperLiveTheme.darkTextPrimary
+                        ? Colors.white
                         : SuperLiveTheme.lightTextPrimary,
                   ),
-                  tooltip: 'Snapshot',
                   onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: const Text('Snapshot saved to gallery 📸'),
-                        backgroundColor: primaryColor,
-                        behavior: SnackBarBehavior.floating,
-                      ),
+                    _showMessage(
+                      context,
+                      'Snapshot button pressed 📸',
+                      primaryColor,
                     );
                   },
                 ),
@@ -898,43 +985,35 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
                     Icons.fiber_manual_record_rounded,
                     color: isRecording ? SuperLiveTheme.redAlert : Colors.grey,
                   ),
-                  tooltip: 'Record Feed',
                   onPressed: () {
                     setState(() => isRecording = !isRecording);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          isRecording
-                              ? 'Recording started 🔴'
-                              : 'Recording saved',
-                        ),
-                        backgroundColor: isRecording
-                            ? SuperLiveTheme.redAlert
-                            : primaryColor,
-                        behavior: SnackBarBehavior.floating,
-                      ),
+                    _showMessage(
+                      context,
+                      isRecording
+                          ? 'Recording started 🔴'
+                          : 'Recording stopped',
+                      isRecording ? SuperLiveTheme.redAlert : primaryColor,
                     );
                   },
                 ),
                 IconButton(
                   icon: Icon(Icons.fullscreen_rounded, color: primaryColor),
-                  tooltip: 'Fullscreen View',
                   onPressed: () {
-                    if (device != null) {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => FullscreenPlayerModal(
-                            cameraName:
-                                'Channel $selectedChannel - ${device.name}',
-                            rtspUrl: device.getRtspUrl(
-                              selectedChannel,
-                              isSubStream: false,
-                            ),
+                    if (device == null) return;
+
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => FullscreenPlayerModal(
+                          cameraName:
+                              'Channel $selectedChannel - ${device.name}',
+                          rtspUrl: device.getRtspUrl(
+                            selectedChannel,
+                            isSubStream: false,
                           ),
                         ),
-                      );
-                    }
+                      ),
+                    );
                   },
                 ),
               ],
@@ -946,8 +1025,6 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
                 ? SuperLiveTheme.darkCardBorder
                 : SuperLiveTheme.lightCardBorder,
           ),
-
-          // Grid Switcher Bar
           Container(
             color: isDark
                 ? SuperLiveTheme.darkSurface
@@ -985,12 +1062,38 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
     );
   }
 
+  void _showMessage(BuildContext context, String message, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
   Widget _buildGridModeButton(String label, int mode, Color primaryColor) {
-    final bool isSelected = gridLayout == mode;
+    final isSelected = gridLayout == mode;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return InkWell(
-      onTap: () => setState(() => gridLayout = mode),
+      onTap: () {
+        final device = widget.device;
+        if (device == null) return;
+
+        setState(() {
+          if (gridLayout == mode) {
+            final totalPages = (device.channelCount / mode).ceil();
+
+            if (totalPages > 0) {
+              gridPage = (gridPage + 1) % totalPages;
+            }
+          } else {
+            gridLayout = mode;
+            gridPage = 0;
+          }
+        });
+      },
       borderRadius: BorderRadius.circular(10),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -1022,14 +1125,32 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
     if (gridLayout == 1) {
       return LiveStreamTile(
         channelName: 'Channel $selectedChannel',
-        rtspUrl: device.getRtspUrl(selectedChannel, isSubStream: false),
+        rtspUrl: device.getRtspUrl(selectedChannel, isSubStream: !isHdMode),
       );
     }
 
-    final int crossCount = gridLayout == 4 ? 2 : 3;
+    final camerasPerPage = gridLayout;
+    final startChannel = (gridPage * camerasPerPage) + 1;
+    final remaining = device.channelCount - startChannel + 1;
+
+    final channelsOnPage = remaining > camerasPerPage
+        ? camerasPerPage
+        : remaining;
+
+    if (channelsOnPage <= 0) {
+      return const Center(
+        child: Text(
+          'No cameras available',
+          style: TextStyle(color: Colors.grey),
+        ),
+      );
+    }
+
+    final crossCount = gridLayout == 4 ? 2 : 3;
+
     return GridView.builder(
       padding: const EdgeInsets.all(2),
-      itemCount: gridLayout,
+      itemCount: channelsOnPage,
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: crossCount,
         childAspectRatio: 16 / 9,
@@ -1037,17 +1158,21 @@ class _SuperLiveViewTabState extends State<SuperLiveViewTab> {
         mainAxisSpacing: 2,
       ),
       itemBuilder: (context, index) {
-        final chNum = (index % device.channelCount) + 1;
+        final channelNumber = startChannel + index;
+
         return LiveStreamTile(
-          channelName: 'CH $chNum',
-          rtspUrl: device.getRtspUrl(chNum, isSubStream: true),
+          channelName: 'CH $channelNumber',
+          rtspUrl: device.getRtspUrl(channelNumber, isSubStream: true),
         );
       },
     );
   }
 }
 
-// Single Stream Tile
+// ============================================================================
+// VLC TILE
+// ============================================================================
+
 class LiveStreamTile extends StatefulWidget {
   final String channelName;
   final String rtspUrl;
@@ -1063,13 +1188,18 @@ class LiveStreamTile extends StatefulWidget {
 }
 
 class _LiveStreamTileState extends State<LiveStreamTile> {
-  late VlcPlayerController _vlcController;
+  late final VlcPlayerController _vlcController;
 
   @override
   void initState() {
     super.initState();
+
+    final safeUrl = widget.rtspUrl.isNotEmpty
+        ? widget.rtspUrl
+        : 'rtsp://127.0.0.1:554';
+
     _vlcController = VlcPlayerController.network(
-      widget.rtspUrl,
+      safeUrl,
       hwAcc: HwAcc.full,
       autoPlay: true,
       options: VlcPlayerOptions(
@@ -1087,11 +1217,13 @@ class _LiveStreamTileState extends State<LiveStreamTile> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+
     final primaryColor = isDark
         ? SuperLiveTheme.darkCyanAccent
         : SuperLiveTheme.lightCyanAccent;
 
     return Stack(
+      fit: StackFit.expand,
       children: [
         VlcPlayer(
           controller: _vlcController,
@@ -1127,7 +1259,10 @@ class _LiveStreamTileState extends State<LiveStreamTile> {
   }
 }
 
-// Fullscreen HD Player Modal
+// ============================================================================
+// FULLSCREEN PLAYER
+// ============================================================================
+
 class FullscreenPlayerModal extends StatefulWidget {
   final String cameraName;
   final String rtspUrl;
@@ -1143,13 +1278,18 @@ class FullscreenPlayerModal extends StatefulWidget {
 }
 
 class _FullscreenPlayerModalState extends State<FullscreenPlayerModal> {
-  late VlcPlayerController _vlcController;
+  late final VlcPlayerController _vlcController;
 
   @override
   void initState() {
     super.initState();
+
+    final safeUrl = widget.rtspUrl.isNotEmpty
+        ? widget.rtspUrl
+        : 'rtsp://127.0.0.1:554';
+
     _vlcController = VlcPlayerController.network(
-      widget.rtspUrl,
+      safeUrl,
       hwAcc: HwAcc.full,
       autoPlay: true,
       options: VlcPlayerOptions(
@@ -1194,11 +1334,13 @@ class _FullscreenPlayerModalState extends State<FullscreenPlayerModal> {
   }
 }
 
-// =============================================================================
-// TAB 2: GATES CONTROL TAB WITH DISTINCT HEADER BAR
-// =============================================================================
+// ============================================================================
+// GATES
+// ============================================================================
+
 class GatesControlTab extends StatefulWidget {
   final String esp32Ip;
+
   const GatesControlTab({super.key, required this.esp32Ip});
 
   @override
@@ -1218,14 +1360,30 @@ class _GatesControlTabState extends State<GatesControlTab> {
     checkConnection();
   }
 
+  @override
+  void didUpdateWidget(covariant GatesControlTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (oldWidget.esp32Ip != widget.esp32Ip) {
+      checkConnection();
+    }
+  }
+
   Future<void> checkConnection() async {
     try {
       final response = await http
           .get(Uri.parse('http://${widget.esp32Ip}/'))
           .timeout(const Duration(seconds: 2));
-      if (mounted) setState(() => isConnected = response.statusCode == 200);
+
+      if (mounted) {
+        setState(() {
+          isConnected = response.statusCode == 200;
+        });
+      }
     } catch (_) {
-      if (mounted) setState(() => isConnected = false);
+      if (mounted) {
+        setState(() => isConnected = false);
+      }
     }
   }
 
@@ -1233,22 +1391,23 @@ class _GatesControlTabState extends State<GatesControlTab> {
     required String firebasePath,
     required String localEndpoint,
     required bool isLoading,
-    required void Function(bool openState, bool loadingState) updateState,
+    required void Function(bool open, bool loading) updateState,
   }) async {
     if (isLoading) return;
 
     setState(() => updateState(true, true));
+
     final stopwatch = Stopwatch()..start();
 
     try {
       if (Firebase.apps.isNotEmpty) {
         try {
-          final ref = FirebaseDatabase.instance.ref(firebasePath);
-          await ref.set(1);
+          await FirebaseDatabase.instance.ref(firebasePath).set(1);
         } catch (e) {
           debugPrint('Firebase write error: $e');
         }
       }
+
       await sendEspCommand(localEndpoint);
     } finally {
       final elapsedMs = stopwatch.elapsedMilliseconds;
@@ -1258,38 +1417,44 @@ class _GatesControlTabState extends State<GatesControlTab> {
       if (remainingMs > 0) {
         await Future.delayed(Duration(milliseconds: remainingMs));
       }
-      if (mounted) setState(() => updateState(false, false));
+
+      if (mounted) {
+        setState(() => updateState(false, false));
+      }
     }
   }
 
   Future<void> sendEspCommand(String endpoint) async {
     try {
-      final response = await http.get(
-        Uri.parse('http://${widget.esp32Ip}/$endpoint'),
+      final response = await http
+          .get(Uri.parse('http://${widget.esp32Ip}/$endpoint'))
+          .timeout(const Duration(seconds: 5));
+
+      if (!mounted) return;
+
+      setState(() => isConnected = true);
+
+      _showSnackBar(
+        'Command Executed: ${response.body}',
+        SuperLiveTheme.greenOnline,
       );
-      if (mounted) {
-        setState(() => isConnected = true);
-        _showSnackBar(
-          'Command Executed: ${response.body}',
-          SuperLiveTheme.greenOnline,
-        );
-      }
     } catch (_) {
-      if (mounted) {
-        setState(() => isConnected = false);
-        final bool fbActive = Firebase.apps.isNotEmpty;
-        _showSnackBar(
-          fbActive
-              ? 'Signal sent to Firebase Cloud 🚀'
-              : 'Direct IP unreachable',
-          fbActive ? SuperLiveTheme.darkCyanAccent : SuperLiveTheme.redAlert,
-        );
-      }
+      if (!mounted) return;
+
+      setState(() => isConnected = false);
+
+      final fbActive = Firebase.apps.isNotEmpty;
+
+      _showSnackBar(
+        fbActive ? 'Signal sent to Firebase Cloud 🚀' : 'Direct IP unreachable',
+        fbActive ? SuperLiveTheme.darkCyanAccent : SuperLiveTheme.redAlert,
+      );
     }
   }
 
   void _showSnackBar(String text, Color color) {
     if (!mounted) return;
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(text),
@@ -1302,6 +1467,7 @@ class _GatesControlTabState extends State<GatesControlTab> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+
     final primaryColor = isDark
         ? SuperLiveTheme.darkCyanAccent
         : SuperLiveTheme.lightCyanAccent;
@@ -1310,11 +1476,10 @@ class _GatesControlTabState extends State<GatesControlTab> {
       backgroundColor: Colors.transparent,
       appBar: buildCustomHeaderBar(context, title: 'Gate Access Controls'),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20.0),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Connection Status Bar
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
@@ -1364,13 +1529,11 @@ class _GatesControlTabState extends State<GatesControlTab> {
               ),
             ),
             const SizedBox(height: 24),
-
             const Text(
               'Manual Gate Triggers',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 14),
-
             AnimatedGateCardWidget(
               title: 'Main Entrance Gate',
               icon: Icons.door_front_door_outlined,
@@ -1388,7 +1551,6 @@ class _GatesControlTabState extends State<GatesControlTab> {
                     ),
             ),
             const SizedBox(height: 16),
-
             AnimatedGateCardWidget(
               title: 'Inside Entrance Gate',
               icon: Icons.sensor_door_outlined,
@@ -1412,7 +1574,6 @@ class _GatesControlTabState extends State<GatesControlTab> {
   }
 }
 
-// ANIMATED GATE CARD WIDGET WITH OPEN BUTTON
 class AnimatedGateCardWidget extends StatefulWidget {
   final String title;
   final IconData icon;
@@ -1433,17 +1594,19 @@ class AnimatedGateCardWidget extends StatefulWidget {
 
 class _AnimatedGateCardWidgetState extends State<AnimatedGateCardWidget>
     with SingleTickerProviderStateMixin {
-  late AnimationController _animController;
-  late Animation<double> _slideAnimation;
+  late final AnimationController _animController;
+  late final Animation<double> _slideAnimation;
 
   @override
   void initState() {
     super.initState();
+
     _animController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 400),
     );
-    _slideAnimation = Tween<double>(begin: 0.0, end: 12.0).animate(
+
+    _slideAnimation = Tween<double>(begin: 0, end: 12).animate(
       CurvedAnimation(parent: _animController, curve: Curves.easeInOut),
     );
   }
@@ -1451,9 +1614,21 @@ class _AnimatedGateCardWidgetState extends State<AnimatedGateCardWidget>
   @override
   void didUpdateWidget(covariant AnimatedGateCardWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.isOpen) {
-      _animController.forward().then((_) => _animController.reverse());
+
+    if (widget.isOpen && !oldWidget.isOpen) {
+      _animate();
     }
+  }
+
+  Future<void> _animate() async {
+    if (!mounted) return;
+
+    try {
+      await _animController.forward();
+      if (mounted) {
+        await _animController.reverse();
+      }
+    } catch (_) {}
   }
 
   @override
@@ -1465,9 +1640,11 @@ class _AnimatedGateCardWidgetState extends State<AnimatedGateCardWidget>
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+
     final primaryColor = isDark
         ? SuperLiveTheme.darkCyanAccent
         : SuperLiveTheme.lightCyanAccent;
+
     final statusColor = widget.isOpen
         ? SuperLiveTheme.greenOnline
         : SuperLiveTheme.redAlert;
@@ -1590,9 +1767,38 @@ class _AnimatedGateCardWidgetState extends State<AnimatedGateCardWidget>
   }
 }
 
-// =============================================================================
-// TAB 3: DEVICE LIST WITH CUSTOM DISTINCT HEADER BAR
-// =============================================================================
+// ============================================================================
+// DEVICE LIST + QR SCANNER
+// ============================================================================
+
+class QrScanResult {
+  final String raw;
+  final String serialNumber;
+  final String username;
+  final String password;
+  final String name;
+  final String ip;
+  final int? port;
+
+  const QrScanResult({
+    required this.raw,
+    this.serialNumber = '',
+    this.username = '',
+    this.password = '',
+    this.name = '',
+    this.ip = '',
+    this.port,
+  });
+
+  bool get hasUsefulData =>
+      serialNumber.isNotEmpty ||
+      username.isNotEmpty ||
+      password.isNotEmpty ||
+      name.isNotEmpty ||
+      ip.isNotEmpty ||
+      port != null;
+}
+
 class DeviceListTab extends StatelessWidget {
   final List<NvrDevice> devices;
   final ValueChanged<NvrDevice> onDeviceAdded;
@@ -1623,8 +1829,21 @@ class DeviceListTab extends StatelessWidget {
     final passCtrl = TextEditingController(
       text: existingDevice?.password ?? '',
     );
+    final ipCtrl = TextEditingController(
+      text: existingDevice?.ip ?? '192.168.1.100',
+    );
+    final portCtrl = TextEditingController(
+      text: (existingDevice?.port ?? 554).toString(),
+    );
+    final rtspPathCtrl = TextEditingController(
+      text: existingDevice?.rtspPath ?? '/ch{channel}/{stream}',
+    );
+
+    int selectedChannelCount = existingDevice?.channelCount ?? 4;
+    bool showAdvanced = false;
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
+
     final primaryColor = isDark
         ? SuperLiveTheme.darkCyanAccent
         : SuperLiveTheme.lightCyanAccent;
@@ -1632,161 +1851,519 @@ class DeviceListTab extends StatelessWidget {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: isDark
-          ? SuperLiveTheme.darkSurface
-          : SuperLiveTheme.lightSurface,
+      backgroundColor: isDark ? const Color(0xFF172033) : Colors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) {
-        return Padding(
-          padding: EdgeInsets.only(
-            top: 24,
-            left: 24,
-            right: 24,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
-          ),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                top: 24,
+                left: 24,
+                right: 24,
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      existingDevice == null ? 'Add DVR Device' : 'Edit Device',
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            existingDevice == null
+                                ? 'Add DVR Device'
+                                : 'Edit Device',
+                            style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: primaryColor.withValues(
+                              alpha: 0.15,
+                            ),
+                            foregroundColor: primaryColor,
+                            elevation: 0,
+                          ),
+                          icon: const Icon(
+                            Icons.qr_code_scanner_rounded,
+                            size: 18,
+                          ),
+                          label: const Text(
+                            'Smart Scan',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                          onPressed: () {
+                            _openCameraScanner(
+                              ctx,
+                              onDetected: (result) {
+                                setModalState(() {
+                                  if (result.name.isNotEmpty) {
+                                    nameCtrl.text = result.name;
+                                  }
+                                  if (result.serialNumber.isNotEmpty) {
+                                    serialCtrl.text = result.serialNumber;
+                                  }
+                                  if (result.username.isNotEmpty) {
+                                    userCtrl.text = result.username;
+                                  }
+                                  if (result.password.isNotEmpty) {
+                                    passCtrl.text = result.password;
+                                  }
+                                  if (result.ip.isNotEmpty) {
+                                    ipCtrl.text = result.ip;
+                                  }
+                                  if (result.port != null) {
+                                    portCtrl.text = result.port.toString();
+                                  }
+                                });
+                              },
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: nameCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Device Name',
+                        hintText: 'Home DVR',
+                        prefixIcon: Icon(Icons.badge_outlined),
                       ),
                     ),
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: primaryColor.withValues(alpha: 0.15),
-                        foregroundColor: primaryColor,
-                        elevation: 0,
-                      ),
-                      icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
-                      label: const Text(
-                        'Smart Scan',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: serialCtrl,
+                      decoration: InputDecoration(
+                        labelText: 'Serial Number / P2P ID',
+                        hintText: 'e.g. HIK884920193',
+                        prefixIcon: const Icon(Icons.qr_code_outlined),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            Icons.qr_code_scanner_rounded,
+                            color: primaryColor,
+                          ),
+                          onPressed: () {
+                            _openCameraScanner(
+                              ctx,
+                              onDetected: (result) {
+                                setModalState(() {
+                                  if (result.name.isNotEmpty) {
+                                    nameCtrl.text = result.name;
+                                  }
+                                  if (result.serialNumber.isNotEmpty) {
+                                    serialCtrl.text = result.serialNumber;
+                                  }
+                                  if (result.username.isNotEmpty) {
+                                    userCtrl.text = result.username;
+                                  }
+                                  if (result.password.isNotEmpty) {
+                                    passCtrl.text = result.password;
+                                  }
+                                  if (result.ip.isNotEmpty) {
+                                    ipCtrl.text = result.ip;
+                                  }
+                                  if (result.port != null) {
+                                    portCtrl.text = result.port.toString();
+                                  }
+                                });
+                              },
+                            );
+                          },
                         ),
                       ),
-                      onPressed: () {
-                        _openCameraScanner(
-                          ctx,
-                          onDetected: (scannedDevice) {
-                            nameCtrl.text = scannedDevice.name;
-                            serialCtrl.text = scannedDevice.serialNumber;
-                            userCtrl.text = scannedDevice.username;
-                            passCtrl.text = scannedDevice.password;
-                          },
-                        );
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: userCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'Username',
+                              prefixIcon: Icon(Icons.person_outline),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: passCtrl,
+                            obscureText: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Password',
+                              prefixIcon: Icon(Icons.lock_outline),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    // 🌟 اختيار عدد الكاميرات بالخارج بأسلوب منظم وسهل 🌟
+                    DropdownButtonFormField<int>(
+                      initialValue:
+                          [
+                            1,
+                            2,
+                            4,
+                            8,
+                            16,
+                            32,
+                            64,
+                          ].contains(selectedChannelCount)
+                          ? selectedChannelCount
+                          : 4,
+                      decoration: const InputDecoration(
+                        labelText: 'Number of Channels / عدد الكاميرات',
+                        prefixIcon: Icon(Icons.videocam_outlined),
+                      ),
+                      dropdownColor: isDark
+                          ? const Color(0xFF1E293B)
+                          : Colors.white,
+                      items: const [
+                        DropdownMenuItem(
+                          value: 1,
+                          child: Text('1 Channel (1 كاميرا)'),
+                        ),
+                        DropdownMenuItem(
+                          value: 2,
+                          child: Text('2 Channels (2 كاميرا)'),
+                        ),
+                        DropdownMenuItem(
+                          value: 4,
+                          child: Text('4 Channels (4 كاميرات)'),
+                        ),
+                        DropdownMenuItem(
+                          value: 8,
+                          child: Text('8 Channels (8 كاميرات)'),
+                        ),
+                        DropdownMenuItem(
+                          value: 16,
+                          child: Text('16 Channels (16 كاميرا)'),
+                        ),
+                        DropdownMenuItem(
+                          value: 32,
+                          child: Text('32 Channels (32 كاميرا)'),
+                        ),
+                        DropdownMenuItem(
+                          value: 64,
+                          child: Text('64 Channels (64 كاميرا)'),
+                        ),
+                      ],
+                      onChanged: (val) {
+                        if (val != null) {
+                          setModalState(() {
+                            selectedChannelCount = val;
+                          });
+                        }
                       },
+                    ),
+                    const SizedBox(height: 12),
+                    InkWell(
+                      onTap: () {
+                        setModalState(() {
+                          showAdvanced = !showAdvanced;
+                        });
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.tune_rounded,
+                              color: primaryColor,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 10),
+                            const Expanded(
+                              child: Text(
+                                'Advanced Settings (IP, Port, Path)',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            Icon(
+                              showAdvanced
+                                  ? Icons.keyboard_arrow_up_rounded
+                                  : Icons.keyboard_arrow_down_rounded,
+                              color: primaryColor,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (showAdvanced) ...[
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: ipCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Local IP / Host',
+                          hintText: '192.168.1.100',
+                          prefixIcon: Icon(Icons.router_outlined),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: portCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'RTSP Port',
+                          hintText: '554',
+                          prefixIcon: Icon(Icons.settings_ethernet),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: rtspPathCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'RTSP Path',
+                          hintText: '/ch{channel}/{stream}',
+                          prefixIcon: Icon(Icons.link_rounded),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Advanced RTSP settings. Use {channel} and {stream} in the path.',
+                        style: TextStyle(fontSize: 11, color: Colors.grey),
+                      ),
+                    ],
+                    const SizedBox(height: 24),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: primaryColor,
+                          foregroundColor: isDark ? Colors.black : Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        onPressed: () {
+                          if (nameCtrl.text.trim().isEmpty &&
+                              serialCtrl.text.trim().isEmpty) {
+                            ScaffoldMessenger.of(ctx).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Enter a Device Name or Serial Number first.',
+                                ),
+                              ),
+                            );
+                            return;
+                          }
+
+                          final dev = NvrDevice(
+                            id:
+                                existingDevice?.id ??
+                                DateTime.now().millisecondsSinceEpoch
+                                    .toString(),
+                            name: nameCtrl.text.trim().isNotEmpty
+                                ? nameCtrl.text.trim()
+                                : 'Home DVR',
+                            serialNumber: serialCtrl.text.trim(),
+                            username: userCtrl.text.trim(),
+                            password: passCtrl.text.trim(),
+                            ip: ipCtrl.text.trim().isNotEmpty
+                                ? ipCtrl.text.trim()
+                                : '192.168.1.100',
+                            port: int.tryParse(portCtrl.text.trim()) ?? 554,
+                            channelCount: selectedChannelCount,
+                            rtspPath: rtspPathCtrl.text.trim().isNotEmpty
+                                ? rtspPathCtrl.text.trim()
+                                : '/ch{channel}/{stream}',
+                          );
+
+                          if (existingDevice == null) {
+                            onDeviceAdded(dev);
+                          } else {
+                            onDeviceUpdated(dev);
+                          }
+
+                          Navigator.pop(ctx);
+                        },
+                        child: Text(
+                          existingDevice == null
+                              ? 'SAVE DEVICE'
+                              : 'UPDATE DEVICE',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 16),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
 
-                TextField(
-                  controller: nameCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Device Name',
-                    hintText: 'Home DVR',
-                    prefixIcon: Icon(Icons.badge_outlined),
-                  ),
+  void _openCameraScanner(
+    BuildContext context, {
+    required ValueChanged<QrScanResult> onDetected,
+  }) {
+    bool handled = false;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.black,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return SizedBox(
+          height: 560,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Scan DVR QR / Barcode',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            'Point the camera at the QR code shown by the DVR/NVR.',
+                            style: TextStyle(
+                              color: Colors.white60,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        color: Colors.white,
+                      ),
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 12),
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        MobileScanner(
+                          onDetect: (capture) {
+                            if (handled) return;
 
-                TextField(
-                  controller: serialCtrl,
-                  decoration: InputDecoration(
-                    labelText: 'Serial Number / P2P ID',
-                    hintText: 'e.g. HIK884920193',
-                    prefixIcon: const Icon(Icons.qr_code_outlined),
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        Icons.qr_code_scanner_rounded,
-                        color: primaryColor,
-                      ),
-                      onPressed: () {
-                        _openCameraScanner(
-                          ctx,
-                          onDetected: (scannedDevice) {
-                            nameCtrl.text = scannedDevice.name;
-                            serialCtrl.text = scannedDevice.serialNumber;
-                            userCtrl.text = scannedDevice.username;
-                            passCtrl.text = scannedDevice.password;
+                            for (final barcode in capture.barcodes) {
+                              final raw = barcode.rawValue?.trim() ?? '';
+                              if (raw.isEmpty) continue;
+
+                              final result = _parseQrData(raw);
+
+                              if (!result.hasUsefulData) {
+                                handled = true;
+                                Navigator.pop(ctx);
+                                if (context.mounted) {
+                                  showDialog(
+                                    context: context,
+                                    builder: (dialogCtx) => AlertDialog(
+                                      title: const Text(
+                                        'QR scanned, but format is not recognized',
+                                      ),
+                                      content: SelectableText(
+                                        raw,
+                                        style: const TextStyle(fontSize: 13),
+                                      ),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () =>
+                                              Navigator.pop(dialogCtx),
+                                          child: const Text('OK'),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }
+                                return;
+                              }
+
+                              handled = true;
+                              onDetected(result);
+                              Navigator.pop(ctx);
+
+                              if (context.mounted) {
+                                final found = <String>[];
+                                if (result.serialNumber.isNotEmpty) {
+                                  found.add('S/N');
+                                }
+                                if (result.username.isNotEmpty) {
+                                  found.add('User');
+                                }
+                                if (result.password.isNotEmpty) {
+                                  found.add('Password');
+                                }
+                                if (result.name.isNotEmpty) found.add('Name');
+
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      'QR scanned successfully: ${found.join(', ')}',
+                                    ),
+                                    backgroundColor: SuperLiveTheme.greenOnline,
+                                    behavior: SnackBarBehavior.floating,
+                                  ),
+                                );
+                              }
+                              return;
+                            }
                           },
-                        );
-                      },
+                        ),
+                        Center(
+                          child: Container(
+                            width: 250,
+                            height: 180,
+                            decoration: BoxDecoration(
+                              border: Border.all(
+                                color: SuperLiveTheme.darkCyanAccent,
+                                width: 2,
+                              ),
+                              borderRadius: BorderRadius.circular(18),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
-                const SizedBox(height: 12),
-
-                TextField(
-                  controller: userCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Username',
-                    prefixIcon: Icon(Icons.person_outline),
-                  ),
-                ),
-                const SizedBox(height: 12),
-
-                TextField(
-                  controller: passCtrl,
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Password',
-                    prefixIcon: Icon(Icons.lock_outline),
-                  ),
-                ),
-                const SizedBox(height: 24),
-
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: primaryColor,
-                      foregroundColor: isDark ? Colors.black : Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    onPressed: () {
-                      if (serialCtrl.text.isNotEmpty ||
-                          nameCtrl.text.isNotEmpty) {
-                        final dev = NvrDevice(
-                          id:
-                              existingDevice?.id ??
-                              DateTime.now().millisecondsSinceEpoch.toString(),
-                          name: nameCtrl.text.isNotEmpty
-                              ? nameCtrl.text
-                              : 'Home DVR',
-                          serialNumber: serialCtrl.text.trim(),
-                          username: userCtrl.text.trim(),
-                          password: passCtrl.text.trim(),
-                          channelCount: 16,
-                        );
-
-                        if (existingDevice == null) {
-                          onDeviceAdded(dev);
-                        } else {
-                          onDeviceUpdated(dev);
-                        }
-                        Navigator.pop(ctx);
-                      }
-                    },
-                    child: Text(
-                      existingDevice == null ? 'SAVE DEVICE' : 'UPDATE DEVICE',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
+                const SizedBox(height: 10),
+                const Text(
+                  'SuperLive QR codes normally provide the serial number and user. Password and device name can stay manual.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white70, fontSize: 11),
                 ),
               ],
             ),
@@ -1796,95 +2373,27 @@ class DeviceListTab extends StatelessWidget {
     );
   }
 
-  void _openCameraScanner(
-    BuildContext context, {
-    required ValueChanged<NvrDevice> onDetected,
-  }) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.black,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (ctx) {
-        return Container(
-          height: 400,
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Scan DVR QR Code',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        'Scan barcode to auto-populate all 4 fields',
-                        style: TextStyle(color: Colors.white60, fontSize: 11),
-                      ),
-                    ],
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close_rounded, color: Colors.white),
-                    onPressed: () => Navigator.pop(ctx),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: MobileScanner(
-                    onDetect: (capture) {
-                      final List<Barcode> barcodes = capture.barcodes;
-                      for (final barcode in barcodes) {
-                        if (barcode.rawValue != null &&
-                            barcode.rawValue!.isNotEmpty) {
-                          final parsedDevice = _parseQrToDevice(
-                            barcode.rawValue!,
-                          );
-                          onDetected(parsedDevice);
-                          Navigator.pop(ctx);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                'Scanned S/N: ${parsedDevice.serialNumber}',
-                              ),
-                              backgroundColor: SuperLiveTheme.darkCyanAccent,
-                              behavior: SnackBarBehavior.floating,
-                            ),
-                          );
-                          break;
-                        }
-                      }
-                    },
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
   void _openSmartScanAndJump(BuildContext context) {
     _openCameraScanner(
       context,
-      onDetected: (scannedDevice) {
-        onSmartScanAddAndOpen(scannedDevice);
+      onDetected: (result) {
+        final device = NvrDevice(
+          id: DateTime.now().millisecondsSinceEpoch.toString(),
+          name: result.name.isNotEmpty ? result.name : 'Home DVR',
+          serialNumber: result.serialNumber,
+          username: result.username.isNotEmpty ? result.username : 'admin',
+          password: result.password,
+          ip: result.ip.isNotEmpty ? result.ip : '192.168.1.100',
+          port: result.port ?? 554,
+          channelCount: 4,
+        );
+
+        onSmartScanAddAndOpen(device);
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Device ${scannedDevice.name} connected! Opening Live View 📹',
+              'Device ${device.serialNumber.isNotEmpty ? device.serialNumber : device.name} scanned. Opening Live View 📹',
             ),
             backgroundColor: SuperLiveTheme.greenOnline,
             behavior: SnackBarBehavior.floating,
@@ -1894,12 +2403,12 @@ class DeviceListTab extends StatelessWidget {
     );
   }
 
-  void _confirmDeleteDevice(BuildContext context, NvrDevice dev) {
+  void _confirmDeleteDevice(BuildContext context, NvrDevice device) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Delete Device?'),
-        content: Text('Are you sure you want to remove "${dev.name}"?'),
+        content: Text('Are you sure you want to remove "${device.name}"?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
@@ -1910,7 +2419,7 @@ class DeviceListTab extends StatelessWidget {
               foregroundColor: SuperLiveTheme.redAlert,
             ),
             onPressed: () {
-              onDeviceDeleted(dev.id);
+              onDeviceDeleted(device.id);
               Navigator.pop(ctx);
             },
             child: const Text('DELETE'),
@@ -1920,97 +2429,156 @@ class DeviceListTab extends StatelessWidget {
     );
   }
 
-  // ACCURATE XML, JSON & TEXT QR PARSER
-  NvrDevice _parseQrToDevice(String rawQrData) {
-    String name = 'Home DVR';
-    String sn = '';
-    String user = 'admin';
-    String pass = '';
+  QrScanResult _parseQrData(String rawQrData) {
+    final raw = rawQrData.trim();
 
-    final cleanData = rawQrData.trim();
+    String serial = '';
+    String username = '';
+    String password = '';
+    String name = '';
+    String ip = '';
+    int? port;
 
-    if (cleanData.contains('<') && cleanData.contains('>')) {
-      final snMatch = RegExp(
-        r'<(?:sn|serial|id|dev_sn)>(.*?)</(?:sn|serial|id|dev_sn)>',
-        caseSensitive: false,
-      ).firstMatch(cleanData);
-      if (snMatch != null && snMatch.group(1) != null) {
-        sn = snMatch.group(1)!.trim();
-      }
+    void assign(String key, String value) {
+      final k = key.trim().toLowerCase().replaceAll(RegExp(r'[\s_\-]'), '');
+      final v = Uri.decodeComponent(value.trim());
+      if (v.isEmpty) return;
 
-      final userMatch = RegExp(
-        r'<(?:user|username|admin|acc)>(.*?)</(?:user|username|admin|acc)>',
-        caseSensitive: false,
-      ).firstMatch(cleanData);
-      if (userMatch != null && userMatch.group(1) != null) {
-        user = userMatch.group(1)!.trim();
-      }
-
-      final passMatch = RegExp(
-        r'<(?:pass|password|pwd)>(.*?)</(?:pass|password|pwd)>',
-        caseSensitive: false,
-      ).firstMatch(cleanData);
-      if (passMatch != null && passMatch.group(1) != null) {
-        pass = passMatch.group(1)!.trim();
-      }
-
-      final nameMatch = RegExp(
-        r'<(?:name|devname|title|dev_name)>(.*?)</(?:name|devname|title|dev_name)>',
-        caseSensitive: false,
-      ).firstMatch(cleanData);
-      if (nameMatch != null && nameMatch.group(1) != null) {
-        name = nameMatch.group(1)!.trim();
+      if ([
+        'sn',
+        'serial',
+        'serialnumber',
+        'serialno',
+        'deviceid',
+        'device',
+        'server',
+        'mac',
+        'macaddress',
+        'p2pid',
+        'p2p',
+      ].contains(k)) {
+        if (serial.isEmpty) serial = v;
+      } else if ([
+        'user',
+        'username',
+        'userid',
+        'account',
+        'admin',
+      ].contains(k)) {
+        if (username.isEmpty) username = v;
+      } else if (['pass', 'password', 'pwd'].contains(k)) {
+        if (password.isEmpty) password = v;
+      } else if ([
+        'name',
+        'devicename',
+        'devname',
+        'nickname',
+        'nick',
+        'title',
+      ].contains(k)) {
+        if (name.isEmpty) name = v;
+      } else if (['ip', 'host', 'hostname', 'address'].contains(k)) {
+        if (ip.isEmpty) ip = v;
+      } else if (['port', 'rtspport'].contains(k)) {
+        port ??= int.tryParse(v);
       }
     }
 
-    if (sn.isEmpty) {
-      try {
-        final Map<String, dynamic> json = jsonDecode(cleanData);
-        sn = (json['sn'] ?? json['serial'] ?? json['id'] ?? '')
-            .toString()
-            .trim();
-        name = (json['name'] ?? json['deviceName'] ?? json['devname'] ?? name)
-            .toString()
-            .trim();
-        user = (json['user'] ?? json['username'] ?? json['admin'] ?? user)
-            .toString()
-            .trim();
-        pass = (json['pass'] ?? json['password'] ?? pass).toString().trim();
-      } catch (_) {}
-    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        decoded.forEach((key, value) {
+          if (value != null) assign(key.toString(), value.toString());
+        });
+      }
+    } catch (_) {}
 
-    if (sn.isEmpty && cleanData.contains('=')) {
-      final pairs = cleanData.split(RegExp(r'[;&,\n]'));
-      for (final pair in pairs) {
-        final kv = pair.split('=');
-        if (kv.length == 2) {
-          final k = kv[0].trim().toLowerCase();
-          final v = kv[1].trim();
-          if (k == 'sn' || k == 'serial' || k == 'id') sn = v;
-          if (k == 'name' || k == 'devname') name = v;
-          if (k == 'user' || k == 'username') user = v;
-          if (k == 'pass' || k == 'password') pass = v;
+    if (raw.contains('<') && raw.contains('>')) {
+      const tags = [
+        'sn',
+        'serial',
+        'serialNumber',
+        'serialno',
+        'deviceid',
+        'device',
+        'server',
+        'mac',
+        'user',
+        'username',
+        'admin',
+        'pass',
+        'password',
+        'pwd',
+        'name',
+        'deviceName',
+        'devname',
+        'nickname',
+        'ip',
+        'host',
+        'port',
+      ];
+
+      for (final tag in tags) {
+        final match = RegExp(
+          '<$tag[^>]*>(.*?)</$tag>',
+          caseSensitive: false,
+          dotAll: true,
+        ).firstMatch(raw);
+
+        if (match?.group(1) != null) {
+          assign(tag, match!.group(1)!);
         }
       }
     }
 
-    if (sn.isEmpty) {
-      sn = cleanData.replaceAll(RegExp(r'<[^>]*>'), '').trim();
+    final queryParts = raw.replaceAll('?', '&').split(RegExp(r'[&;\n,]'));
+    for (final part in queryParts) {
+      final eq = part.indexOf('=');
+      if (eq > 0) {
+        assign(part.substring(0, eq), part.substring(eq + 1));
+      }
     }
 
-    return NvrDevice(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      name: name.isNotEmpty ? name : 'Home DVR',
-      serialNumber: sn,
-      username: user.isNotEmpty ? user : 'admin',
-      password: pass,
-      channelCount: 16,
+    final uri = Uri.tryParse(raw);
+    if (uri != null) {
+      for (final entry in uri.queryParameters.entries) {
+        assign(entry.key, entry.value);
+      }
+    }
+
+    if (serial.isEmpty && _looksLikeDeviceId(raw)) {
+      serial = raw;
+    }
+
+    return QrScanResult(
+      raw: raw,
+      serialNumber: serial.trim(),
+      username: username.trim(),
+      password: password.trim(),
+      name: name.trim(),
+      ip: ip.trim(),
+      port: port,
     );
+  }
+
+  bool _looksLikeDeviceId(String value) {
+    final v = value.trim();
+
+    if (v.isEmpty || v.length > 64) return false;
+    if (v.startsWith('http://') || v.startsWith('https://')) return false;
+    if (v.contains(' ') || v.contains('\n') || v.contains('\r')) return false;
+
+    if (RegExp(r'^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$').hasMatch(v)) {
+      return true;
+    }
+
+    return RegExp(r'^[A-Za-z0-9._:\-]{6,64}$').hasMatch(v);
   }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+
     final primaryColor = isDark
         ? SuperLiveTheme.darkCyanAccent
         : SuperLiveTheme.lightCyanAccent;
@@ -2036,90 +2604,122 @@ class DeviceListTab extends StatelessWidget {
           ),
         ],
       ),
-      body: ListView.separated(
-        padding: const EdgeInsets.all(20),
-        itemCount: devices.length,
-        separatorBuilder: (_, _) => const SizedBox(height: 14),
-        itemBuilder: (context, index) {
-          final dev = devices[index];
-          return Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: isDark
-                  ? SuperLiveTheme.darkSurface
-                  : SuperLiveTheme.lightSurface,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(
-                color: isDark
-                    ? SuperLiveTheme.darkCardBorder
-                    : SuperLiveTheme.lightCardBorder,
+      body: devices.isEmpty
+          ? const Center(
+              child: Text(
+                'No DVR/NVR devices yet.\nPress + or scan a QR code.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey),
               ),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
+            )
+          : ListView.separated(
+              padding: const EdgeInsets.all(20),
+              itemCount: devices.length,
+              separatorBuilder: (context, index) => const SizedBox(height: 14),
+              itemBuilder: (context, index) {
+                final device = devices[index];
+
+                return Container(
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: primaryColor.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Icon(Icons.dns_rounded, color: primaryColor, size: 28),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: InkWell(
-                    onTap: () =>
-                        _showAddOrEditDeviceModal(context, existingDevice: dev),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          dev.name,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'S/N: ${dev.serialNumber.isNotEmpty ? dev.serialNumber : dev.ip} • User: ${dev.username}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: isDark
-                                ? SuperLiveTheme.darkTextSecondary
-                                : SuperLiveTheme.lightTextSecondary,
-                          ),
-                        ),
-                      ],
+                    color: isDark
+                        ? SuperLiveTheme.darkSurface
+                        : SuperLiveTheme.lightSurface,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: isDark
+                          ? SuperLiveTheme.darkCardBorder
+                          : SuperLiveTheme.lightCardBorder,
                     ),
                   ),
-                ),
-                IconButton(
-                  icon: Icon(Icons.edit_rounded, color: primaryColor, size: 20),
-                  onPressed: () =>
-                      _showAddOrEditDeviceModal(context, existingDevice: dev),
-                ),
-                IconButton(
-                  icon: const Icon(
-                    Icons.delete_outline_rounded,
-                    color: SuperLiveTheme.redAlert,
-                    size: 20,
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: primaryColor.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Icon(
+                          Icons.dns_rounded,
+                          color: primaryColor,
+                          size: 28,
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: InkWell(
+                          onTap: () => _showAddOrEditDeviceModal(
+                            context,
+                            existingDevice: device,
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                device.name,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'S/N: ${device.serialNumber.isNotEmpty ? device.serialNumber : '-'}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: isDark
+                                      ? SuperLiveTheme.darkTextSecondary
+                                      : SuperLiveTheme.lightTextSecondary,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'IP: ${device.ip}:${device.port} • ${device.channelCount} CH',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: isDark
+                                      ? SuperLiveTheme.darkTextSecondary
+                                      : SuperLiveTheme.lightTextSecondary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          Icons.edit_rounded,
+                          color: primaryColor,
+                          size: 20,
+                        ),
+                        onPressed: () => _showAddOrEditDeviceModal(
+                          context,
+                          existingDevice: device,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(
+                          Icons.delete_outline_rounded,
+                          color: SuperLiveTheme.redAlert,
+                          size: 20,
+                        ),
+                        onPressed: () => _confirmDeleteDevice(context, device),
+                      ),
+                    ],
                   ),
-                  onPressed: () => _confirmDeleteDevice(context, dev),
-                ),
-              ],
+                );
+              },
             ),
-          );
-        },
-      ),
     );
   }
 }
 
-// =============================================================================
-// TAB 4: SETTINGS TAB WITH CUSTOM DISTINCT HEADER BAR
-// =============================================================================
-class SettingsTab extends StatelessWidget {
+// ============================================================================
+// SETTINGS
+// ============================================================================
+
+class SettingsTab extends StatefulWidget {
   final String esp32Ip;
   final ValueChanged<String> onEspIpSaved;
 
@@ -2130,10 +2730,40 @@ class SettingsTab extends StatelessWidget {
   });
 
   @override
+  State<SettingsTab> createState() => _SettingsTabState();
+}
+
+class _SettingsTabState extends State<SettingsTab> {
+  late TextEditingController espController;
+
+  @override
+  void initState() {
+    super.initState();
+    espController = TextEditingController(text: widget.esp32Ip);
+  }
+
+  @override
+  void didUpdateWidget(covariant SettingsTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (oldWidget.esp32Ip != widget.esp32Ip &&
+        espController.text != widget.esp32Ip) {
+      espController.text = widget.esp32Ip;
+    }
+  }
+
+  @override
+  void dispose() {
+    espController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final espController = TextEditingController(text: esp32Ip);
     final appState = SuperLiveSmartHomeApp.of(context);
-    final isDark = appState?.isDarkMode ?? true;
+
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     final primaryColor = isDark
         ? SuperLiveTheme.darkCyanAccent
         : SuperLiveTheme.lightCyanAccent;
@@ -2146,13 +2776,11 @@ class SettingsTab extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Theme Mode Selector Card
             const Text(
               'App Theme Mode',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 10),
-
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -2189,22 +2817,20 @@ class SettingsTab extends StatelessWidget {
                   style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
                 value: isDark,
-                onChanged: (bool val) {
-                  appState?.toggleTheme(val);
+                onChanged: (value) {
+                  appState?.toggleTheme(value);
                 },
               ),
             ),
             const SizedBox(height: 28),
-
-            // ESP32 Gateway Config Card
             const Text(
               'ESP32 Local Gateway IP',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 10),
-
             TextField(
               controller: espController,
+              keyboardType: TextInputType.url,
               decoration: InputDecoration(
                 hintText: '192.168.1.50',
                 filled: true,
@@ -2223,7 +2849,6 @@ class SettingsTab extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-
             SizedBox(
               width: double.infinity,
               height: 48,
@@ -2236,7 +2861,12 @@ class SettingsTab extends StatelessWidget {
                   ),
                 ),
                 onPressed: () {
-                  onEspIpSaved(espController.text.trim());
+                  final ip = espController.text.trim();
+
+                  if (ip.isEmpty) return;
+
+                  widget.onEspIpSaved(ip);
+
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
                       content: Text('ESP32 IP Updated Successfully!'),
